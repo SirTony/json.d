@@ -7,6 +7,7 @@ package enum TokenType
     string,
     identifier,
     null_,
+    boolean,
     number,
     colon,
     comma,
@@ -61,6 +62,10 @@ package string identify( TokenType type )
 
         case TokenType.rightBrace:
             name = "rbrace";
+            break;
+
+        case TokenType.boolean:
+            name = "boolean";
             break;
 
         case TokenType.eof:

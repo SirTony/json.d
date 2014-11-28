@@ -64,6 +64,10 @@ final package class Parser
                 value = null;
                 break;
 
+            case TokenType.boolean:
+                value = token.contents.to!bool;
+                break;
+
             default:
                 throw new JsonParserException( "Unexpected %s".format( token.type.identify() ), token.line, token.column, token.fileName );
         }
@@ -136,7 +140,7 @@ final package class Parser
 
             this.matchAndTake( TokenType.comma );
 
-            if( this.match( TokenType.rightSquare )	)
+            if( this.match( TokenType.rightSquare ) )
                 break;
         }
 

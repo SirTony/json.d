@@ -24,6 +24,12 @@ private {
         '{': TokenType.leftBrace,
         '}': TokenType.rightBrace
     ];
+
+    enum TokenType[dstring] keywords = [
+        "true":  TokenType.boolean,
+        "false": TokenType.boolean,
+        "null":  TokenType.null_
+    ];
 }
 
 final package class Lexer
@@ -69,13 +75,13 @@ final package class Lexer
 
             if( this.allowComments )
             {
-                if( this.takeIfNext( "//"d ) )
+                if( this.takeIfNext( "//" ) )
                 {
                     this.takeWhile( c => c != '\n' );
                     continue outer;
                 }
 
-                if( this.takeIfNext( "/*"d ) )
+                if( this.takeIfNext( "/*" ) )
                 {
                     int nest = 1;
 
@@ -88,13 +94,13 @@ final package class Lexer
 
                     multi: while( !this.eof && nest > 0 )
                     {
-                        if( this.takeIfNext( "*/"d ) )
+                        if( this.takeIfNext( "*/" ) )
                         {
                             --nest;
                             continue multi;
                         }
 
-                        if( this.takeIfNext( "/*"d ) )
+                        if( this.takeIfNext( "/*" ) )
                         {
                             ++nest;
                             positions[nest] = [ this.line, this.column - 2 ];
@@ -204,7 +210,7 @@ final package class Lexer
                 continue outer;
             }
 
-            if( this.peek().isNumber || this.peek() == '-' )
+            if( this.peek().isNumber || this.peek() == '-' || this.peek() == '+' )
             {
                 int currentLine = this.line;
                 int currentColumn = this.column;
@@ -231,10 +237,13 @@ final package class Lexer
                 }
             }
 
-            if( this.takeIfNext( "null" ) )
+            words: foreach( kw, type; keywords )
             {
-                tokens ~= Token( TokenType.null_, null, this.line, this.column - 4, this.file );
-                continue outer;
+                if( this.takeIfNext( kw ) )
+                {
+                    tokens ~= Token( type, kw, this.line, this.column - kw.length, this.file );
+                    continue outer;
+                }
             }
 
             if( this.peek().isAlpha || this.peek() == '_' )
