@@ -1,0 +1,26 @@
+{
+    "name": "JSON.d",
+    "description": "An alternative JSON parser that relies on Variant from the standard library for storing values.",
+    "authors": [ "Tony Hudgins" ],
+    "homepage": "https://github.com/Syke94/json.d",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2014 Tony Hudgins",
+    "targetType": "library",
+    "targetName": "json",
+    "targetPath": "bin",
+    "sourcePath": "src",
+
+    "buildTypes": {
+        "debug": {
+            "buildOptions": [ "debugMode", "debugInfo" ]
+        },
+
+        "release": {
+            "buildOptions": [ "releaseMode", "optimize", "inline" ]
+        },
+
+        "test": {
+            "buildOptions": [ "unittests", "debugMode", "debugInfo", "coverage" ]
+        }
+    }
+}
