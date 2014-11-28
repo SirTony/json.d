@@ -22,14 +22,6 @@ final package class Parser
         this.allowIdentifierKeys = allowIdentifierKeys;
         this.allowTrailingCommas = allowTrailingCommas;
         this.tokens = lexer.lex();
-
-        version( unittest )
-        {
-            import std.stdio;
-
-            foreach( token; this.tokens )
-                writefln( "%s (%s) @ %u:%u in %s", token.type.identify(), token.contents(), token.line, token.column, token.fileName );
-        }
     }
 
     public Variant parse()
