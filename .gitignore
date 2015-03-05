@@ -1,3 +1,7 @@
 [Bb]in/
 .dub/
-.exe
+*.exe
+*.lib
+*.sys
+*.dll
+dub.selections.json

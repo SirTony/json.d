@@ -4,6 +4,7 @@ private {
     import std.conv;
     import std.array;
     import std.string;
+    import std.traits;
     import std.variant;
     import std.algorithm;
     import json.parser.lexer;
@@ -11,16 +12,14 @@ private {
     import json.jsonexception;
 }
 
-final package class Parser
+final package class Parser( C ) if( isSomeChar!C )
 {
-    private Token[] tokens;
+    private Token!( C )[] tokens;
     private bool allowIdentifierKeys;
     private bool allowTrailingCommas;
 
-    public this( Lexer lexer, bool allowIdentifierKeys, bool allowTrailingCommas )
+    public this( Lexer!( C ) lexer )
     {
-        this.allowIdentifierKeys = allowIdentifierKeys;
-        this.allowTrailingCommas = allowTrailingCommas;
         this.tokens = lexer.lex();
     }
 
@@ -39,7 +38,7 @@ final package class Parser
 
     private Variant parseValue()
     {
-        Token token = this.take();
+        auto token = this.take();
         Variant value;
 
         switch( token.type )
@@ -88,7 +87,7 @@ final package class Parser
 
         while( true )
         {
-            Token keyToken = this.takeFirstOf( TokenType.identifier, TokenType.string );
+            auto keyToken = this.takeFirstOf( TokenType.identifier, TokenType.string );
 
             if( keyToken.type == TokenType.identifier && !this.allowIdentifierKeys )
                 throw new JsonParserException( "Unexpected %s, expecting %s.".format( keyToken.type.identify(), TokenType.string.identify() ), keyToken.line, keyToken.column, keyToken.fileName );
@@ -100,7 +99,7 @@ final package class Parser
 
             object[key] = value;
 
-            if( this.match( TokenType.comma ) && this.match( TokenType.rightBrace, 1 ) && !this.allowTrailingCommas )
+            if( this.match( TokenType.comma ) && this.match( TokenType.rightBrace, 1 ) )
             {
                 Token comma = this.peek();
                 throw new JsonParserException( "Unexpected %s, expecting %s.".format( comma.type.identify(), TokenType.rightBrace.identify() ), comma.line, comma.column, comma.fileName );
@@ -132,14 +131,13 @@ final package class Parser
         {
             array ~= this.parseValue();
 
-            if( this.match( TokenType.comma ) && this.match( TokenType.rightSquare, 1 ) && !this.allowTrailingCommas )
+            if( this.match( TokenType.comma ) && this.match( TokenType.rightSquare, 1 ) )
             {
-                Token comma = this.peek();
+                auto comma = this.peek();
                 throw new JsonParserException( "Unexpected %s, expecting %s.".format( comma.type.identify(), TokenType.rightSquare.identify() ), comma.line, comma.column, comma.fileName );
             }
 
             this.matchAndTake( TokenType.comma );
-
             if( this.match( TokenType.rightSquare ) )
                 break;
         }
@@ -150,7 +148,7 @@ final package class Parser
         return result;
     }
 
-    private Token peek( int distance = 0 )
+    private Token!C peek( int distance = 0 )
     {
         if( distance == 0 )
             return this.tokens.front;
@@ -158,16 +156,16 @@ final package class Parser
             return this.tokens[distance];
     }
 
-    private Token take()
+    private Token!C take()
     {
-        Token value = this.peek();
+        auto value = this.peek();
         this.tokens.popFront();
         return value;
     }
 
-    private Token take( TokenType type )
+    private Token!C take( TokenType type )
     {
-        Token value = this.take();
+        auto value = this.take();
 
         if( value.type != type )
             throw new JsonParserException( "Unexpected %s, expecting %s.".format( value.type.identify(), type.identify() ), value.line, value.column, value.fileName );
@@ -175,7 +173,7 @@ final package class Parser
         return value;
     }
 
-    private Token takeFirstOf( TokenType[] types ... )
+    private Token!C takeFirstOf( TokenType[] types ... )
     {
         foreach( type; types )
         {

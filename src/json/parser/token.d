@@ -1,6 +1,9 @@
 module json.parser.token;
 
-private import std.string;
+private {
+    import std.string;
+    import std.traits;
+}
 
 package enum TokenType
 {
@@ -75,22 +78,24 @@ package string identify( TokenType type )
     return "T_" ~ name.toUpper();
 }
 
-final package struct Token
+final package struct Token( C ) if( isSomeChar!C )
 {
-    private dstring _contents;
+    private alias immutable( C )[] jstring;
+
+    private jstring _contents;
     private string _fileName;
     private int _line;
     private int _column;
     private TokenType _type;
 
-    public dstring contents() @property
+    public jstring contents() @property
     {
-        return this._contents;
+        return this._contents.idup;
     }
 
     public string fileName() @property
     {
-        return this._fileName;
+        return this._fileName.idup;
     }
 
     public int line() @property
@@ -110,7 +115,7 @@ final package struct Token
 
     public this() @disable;
 
-    public this( TokenType type, dstring contents, int line, int column, string fileName = null )
+    public this( TokenType type, jstring contents, int line, int column, string fileName = null )
     {
         this._type = type;
         this._contents = contents;
