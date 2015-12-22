@@ -29,7 +29,7 @@ Getting started
 
 ### Through dub
 
-JSON.d is available in the [dub package repository](http://code.dlang.org/packages/json.d).
+JSON.d is available in the [dub package repository](http://code.dlang.org/packages/json).
 
 ### Building from source
 

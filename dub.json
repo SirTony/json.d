@@ -1,5 +1,5 @@
 {
-    "name":        "json.d",
+    "name":        "json",
     "description": "A JSON parsing and validation library.",
     "authors":     [ "Tony Hudgins" ],
     "homepage":    "https://github.com/SirTony/json.d",
