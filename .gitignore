@@ -1,7 +1,6 @@
-[Bb]in/
-.dub/
-*.exe
-*.lib
-*.sys
-*.dll
+.dub
 dub.selections.json
+docs.json
+__dummy.html
+*.o
+*.obj

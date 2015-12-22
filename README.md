@@ -1,29 +1,92 @@
 What is it?
 ===========
 
-JSON.d is an alternative to the JSON parser in D's standard library, containing its own parser and using the Variant type from the standard library to store values instead of shipping its own types. JSON.d is implemented entirely in the D programming language.
+JSON.d is an alternative to phobos' (D's standard library) built-in JSON module that contains its own value type and its own parser that adheres to the JSON standard as specified at http://www.json.org/.
 
 Why?
 ====
 
-JSON.d was born of a desire to have a small, lightweight JSON parser with a more simplistic API in order to make using it feel more streamlined.
+Phobos' JSON module leaves much to be desired; it can sometimes be tedious to work with and can overcomplicate the manipulation of even simple JSON objects. This is partly due to the inherent challenges associated with mapping an implicitly typed structure to a statically typed language, and partly due to phobos' implementation being more simplistic and not leveraging the full capabilities of the language.
+
+JSON.d aims to provide an implementation that's as easy as possible to work with, making it feel as natural as possible to read and manipulation JSON documents.
+
+Features
+========
+
+JSON.d is still young, and as such **it is prerelease software**, so please keep in mind functionality is limited for now and it is not bug-free.
+
+- [x] Parsing JSON string to object structure.
+- [x] Writing object structure back to JSON.
+
+### Planned Features
+
+- [ ] Validating JSON documents against schemas
+- [ ] Validating JSON documents against a custom, [TypeScript](http://www.typescriptlang.org/) inspired [DSL](https://en.wikipedia.org/wiki/Domain-specific_language).
+  - [ ] Generating valid schemas from the DSL.
 
 Getting started
 ===============
 
-Even though it isn't in the package registry yet, JSON.d uses the [DUB package manager](http://code.dlang.org/download) for building. If you don't already have it, head over to the provided link and install it.
+### Through dub
 
-The first step is to get the source code, in order to do that, clone the repository by running the following command:
+JSON.d is available in the [dub package repository](http://code.dlang.org/packages/json.d).
 
-    $ git clone https://github.com/Syke94/json.d.git ./json.d
+### Building from source
 
-Once the repository has finished cloning, run the following command to build the library:
+Since JSON.d uses dub, building from source on any platform is dead-simple.
 
+First clone the repository:
+
+    $ git clone https://github.com/SirTony/json.d.git ./json.d
+
+Then compile the library:
+
+    $ cd json.d
     $ dub build --build=release
 
-That will build the library in release mode, and the resulting binary will be located in `json.d/bin/`.
+Compiled binaries will be located in the `bin` directory.
+
+### Example
+
+``` javascript
+// store.json
+{
+    "products": [
+        {
+            "id":    1,
+            "name":  "Door hinge",
+            "price": 0.75,
+            "tags":  [ "home improvement", "hardware" ]
+        },
+        {
+            "id":    2,
+            "name":  "Box of screws",
+            "price": 3.50,
+            "tags":  [ "hardware", "tools" ]
+        }
+    ]
+}
+```
+
+``` d
+// store.d
+
+import std.file;
+import std.stdio;
+
+import json.d;
+
+void main()
+{
+    auto json = readText( "store.json" );
+    auto store = json.parseJson();
+
+    foreach( product; store["products"] )
+        writefln( "%s: $%g", product["name"], product["price"] );
+}
+```
 
 Things to note
 ==============
 
-JSON.d is tested on Windows with the DMD compiler, version 2.066. Other D compilers such as LDC, SDC, and GDC are not officially supported, but should still work as long as the compiler supports [DIP37](http://wiki.dlang.org/DIP37) (importing `package.d` files). JSON.d is also not officially supported on Linux or OS X, but should still work as intended.
+JSON.d is tested on Windows with the DMD compiler, version 2.068. Other D compilers such as LDC, SDC, and GDC are not officially supported, but should still work.

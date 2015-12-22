@@ -1,272 +1,335 @@
 module json.parser.lexer;
 
+package import json.parser.token;
+
 private {
+    import std.utf;
     import std.uni;
     import std.conv;
-    import std.array;
-    import std.traits;
+    import std.range;
     import std.string;
+    import std.traits;
     import std.algorithm;
-    import json.parser.token;
-    import json.jsonexception;
+    import std.functional;
+
+    import json.exception;
+
+    alias Tokenizer = bool delegate( wchar, out JsonToken );
+    alias Predicate = bool delegate( wchar );
 }
 
-private template Chars( C ) if( isSomeChar!C )
-{
-    private enum C[] hexChars = [
-        'a', 'b', 'c', 'd', 'e', 'f',
-        'A', 'B', 'C', 'D', 'E', 'F',
+package {
+    enum JsonToken.Type[wstring] keywords = [
+        "null":  JsonToken.Type.Null,
+        "true":  JsonToken.Type.True,
+        "false": JsonToken.Type.False,
     ];
 
-    private enum TokenType[C] punctuation = [
-        ':': TokenType.colon,
-        ',': TokenType.comma,
-        '[': TokenType.leftSquare,
-        ']': TokenType.rightSquare,
-        '{': TokenType.leftBrace,
-        '}': TokenType.rightBrace
-    ];
-
-    private enum TokenType[immutable( C )[]] keywords = [
-        "true":  TokenType.boolean,
-        "false": TokenType.boolean,
-        "null":  TokenType.null_
+    enum JsonToken.Type[wchar] punctuation = [
+        '{': JsonToken.Type.LeftBrace,
+        '}': JsonToken.Type.RightBrace,
+        '[': JsonToken.Type.LeftSquare,
+        ']': JsonToken.Type.RightSquare,
+        ',': JsonToken.Type.Comma,
+        ':': JsonToken.Type.Colon,
     ];
 }
 
-final package class Lexer( C ) if( isSomeChar!C )
+final package class Lexer
 {
-    mixin Chars!C;
+private:
+    wstring source;
+    immutable size_t length;
+    size_t index;
+    size_t line;
+    size_t column;
+    TextSpan[] spans;
+    Tokenizer[] tokenizers;
 
-    private alias immutable( C )[] jstring;
-
-    private jstring source;
-    private int column;
-    private int line;
-    private string file;
-
-    private bool eof() @property
+    bool eof() const @property
     {
-        return this.source.length == 0;
+        return this.index >= this.length;
     }
 
-    public this( const( C )[] source, string file = null )
+    public this( wstring source )
     {
         this.source = source;
-        this.line = 1;
-        this.column = 1;
-        this.file = file;
+        this.length = source.length;
+        this.tokenizers = [
+            &this.tryLexString,
+            &this.tryLexNumber,
+            &this.tryLexWord,
+            &this.tryLexPunctuation,
+        ];
     }
 
-    public Token[] lex()
+    public JsonToken[] tokenize()
     {
-        Token!( C )[] tokens;
-
-        outer: while( !this.eof )
+        JsonToken[] tokens;
+        while( !this.eof )
         {
-            this.takeWhile( ( c ) {
-                if( c == '\n' )
-                {
-                    ++this.line;
-                    this.column = 0;
-                }
-
-                return c.isWhite;
-            } );
+            this.skipWhile( c => c.isWhite );
 
             if( this.eof )
                 break;
 
-            if( this.peek() == '"' || this.peek() == '\'' )
+            JsonToken token;
+            if( this.tokenizers.any!( fn => fn( this.peek(), token ) ) )
+                tokens ~= token;
+            else
             {
-                int currentLine = this.line;
-                int currentColumn = this.column;
-                C terminator = this.take();
-                jstring contents;
-
-                str: while( !this.eof && this.peek() != terminator )
-                {
-                    if( this.peek() == '\\' )
-                    {
-                        int currentLine2 = this.line;
-                        int currentColumn2 = this.column;
-
-                        this.take();
-                        C esc = this.take();
-
-                        switch( esc )
-                        {
-                            case '\'':
-                            case '"':
-                                contents ~= esc;
-                                break;
-
-                            case 'n':
-                                contents ~= '\n';
-                                break;
-
-                            case 't':
-                                contents ~= '\t';
-                                break;
-
-                            case 'v':
-                                contents ~= '\v';
-                                break;
-
-                            case 'f':
-                                contents ~= '\f';
-                                break;
-
-                            case 'r':
-                                contents ~= '\r';
-                                break;
-
-                            case 'x':
-                            case 'u':
-                                int currentLine3 = this.line;
-                                int currentColumn3 = this.column;
-
-                                jstring number = this.takeWhile( c => c.isNumber || hexChars.canFind( c ) );
-                                uint code;
-
-                                try
-                                {
-                                    code = number.to!( uint )( 16 ); //base-16 (hexadecimal)
-                                }
-                                catch( Throwable th )
-                                {
-                                    throw new JsonParserException( "'\\u%s' is not a valid character.".format( number ), currentLine3, currentColumn3, this.file, th );
-                                }
-
-                                C ch = cast( C )code;
-
-                                if( !ch.isValidDchar || ch == 0xFFFE || ch == 0xFFFF )
-                                    throw new JsonParserException( "'\\u%s' is not a valid character.".format( number ), currentLine3, currentColumn3, this.file );
-
-                                contents ~= ch;
-                                break;
-
-                            default:
-                                throw new JsonParserException( "Unrecognized escape sequence '\\%s'".format( esc ), currentLine2, currentColumn2, this.file );
-                        }
-
-                        continue str;
-                    }
-
-                    contents ~= this.take();
-                }
-
-                if( this.eof )
-                    throw new JsonParserException( "Unexpected end-of-input.", currentLine, currentColumn, this.file );
-
-                this.take();
-                tokens ~= Token!( C )( TokenType.string, contents, currentLine, currentColumn, this.file );
-                continue outer;
+                this.markStart();
+                auto c = this.take();
+                throw new JsonParserException( this.markEnd(), "Unexpected character '%s' (0x%04X)".format( c, c ) );
             }
-
-            if( this.peek().isNumber || this.peek() == '-' || this.peek() == '+' )
-            {
-                int currentLine = this.line;
-                int currentColumn = this.column;
-
-                jstring number = this.takeWhile(
-                    c =>
-                        c.isNumber ||
-                        c == 'e'   ||
-                        c == 'E'   ||
-                        c == '-'   ||
-                        c == '+'   ||
-                        c == '.'
-                );
-
-                try
-                {
-                    real value = number.to!real;
-                    tokens ~= Token!( c )( TokenType.number, number, currentLine, currentColumn, this.file );
-                    continue outer;
-                }
-                catch( Throwable th )
-                {
-                    throw new JsonParserException( "'%s' is not a valid number.".format( number ), currentLine, currentColumn, this.file, th );
-                }
-            }
-
-            words: foreach( kw, type; keywords )
-            {
-                if( this.takeIfNext( kw ) )
-                {
-                    tokens ~= Token!( C )( type, kw, this.line, this.column - kw.length, this.file );
-                    continue outer;
-                }
-            }
-
-            if( this.peek().isAlpha || this.peek() == '_' )
-            {
-                jstring contents;
-                contents ~= this.take();
-                contents ~= this.takeWhile( c => c.isAlpha || c.isNumber || c == '_' );
-
-                tokens ~= Token!( C )( TokenType.identifier, contents, this.line, this.column - contents.length, this.file );
-                continue outer;
-            }
-
-            auto op = this.peek() in punctuation;
-            if( op !is null )
-            {
-                tokens ~= Token!( C )( *op, [ this.take() ], this.line, this.column - 1, this.file );
-                continue outer;
-            }
-
-            throw new JsonParserException( "Unexpected character '%s'.".format( this.peek() ), this.line, this.column, this.file );
         }
 
-        tokens ~= Token!( C )( TokenType.eof, null, this.line, this.column, this.file );
+        this.markStart();
+        tokens ~= this.makeToken( JsonToken.Type.EndOfInput, null );
         return tokens;
     }
 
-    private C peek( int distance = 0 )
+    bool tryLexString( wchar c, out JsonToken token )
     {
-        if( distance == 0 )
-            return this.source.front;
-        else
-            return this.source[distance];
+        if( c != '"' )
+            return false;
+
+        this.markStart();
+        auto terminator = this.take();
+
+        wstring text;
+        wchar   next;
+        while( !this.eof && ( next = this.peek() ) != terminator )
+        {
+            if( next.isControl && !next.isSpace )
+                throw new JsonParserException( this.markEnd(), "Control characters are not allowed in strings" );
+
+            if( next == '\\' )
+            {
+                text ~= this.handleEscapeSequence( this.take() );
+                continue;
+            }
+
+            text ~= this.take();
+        }
+
+        if( this.eof )
+            throw new JsonParserException( this.markEnd(), "Unexpected end-of-input (unterminated string)" );
+
+        assert( this.take() == terminator );
+
+        token = this.makeToken( JsonToken.Type.String, text );
+        return true;
     }
 
-    private C take()
+    bool tryLexNumber( wchar c, out JsonToken token )
+    {
+        if( !c.isNumber )
+            return false;
+
+        bool hasDecimal;
+        bool hasExponent;
+        bool forceTake;
+
+        bool pred( wchar ch )
+        {
+            if( forceTake )
+            {
+                forceTake = false;
+                return true;
+            }
+
+            if( ch == '.' )
+            {
+                if( hasDecimal )
+                    throw new JsonParserException( this.markEnd(), "Duplicate decimal point in number" );
+
+                hasDecimal = true;
+                return this.peek( 1 ).isNumber;
+            }
+
+            if( ch == 'e' || ch == 'E' )
+            {
+                if( hasExponent )
+                    throw new JsonParserException( this.markEnd(), "Duplicate exponent in number" );
+
+                hasExponent = true;
+                auto next = this.peek( 1 );
+                if( next == '+' || next == '-' )
+                {
+                    forceTake = true;
+                    return this.peek( 2 ).isNumber;
+                }
+
+                return next.isNumber;
+            }
+
+            return ch.isNumber;
+        }
+
+        this.markStart();
+        auto text = this.takeWhile( &pred );
+        token = this.makeToken( JsonToken.Type.Number, text );
+        return true;
+    }
+
+    bool tryLexWord( wchar c, out JsonToken token )
+    {
+        if( !c.isAlpha && c != '_' )
+            return false;
+
+        this.markStart();
+        auto text = this.takeWhile( ch => ch.isAlpha || ch.isNumber || ch == '_' );
+        if( auto type = text in keywords )
+        {
+            token = this.makeToken( *type, text );
+            return true;
+        }
+
+        throw new JsonParserException( this.markEnd(), "Unexpected '%s' (did you forget to quote an object key?)".format( text ) );
+    }
+
+    bool tryLexPunctuation( wchar c, out JsonToken token )
+    {
+        foreach( ch, type; punctuation )
+        {
+            if( c == ch )
+            {
+                this.markStart();
+                token = this.makeToken( type, [ this.take() ] );
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    wchar handleEscapeSequence( wchar escape )
     {
         if( this.eof )
-            throw new JsonParserException( "Unexpected end-of-input.", this.line, this.column, this.file );
+            throw new JsonParserException( this.markEnd(), "Unexpected end-of-input following escape sequence in string" );
 
-        C value = this.peek();
-        this.source.popFront();
-        ++this.column;
-        return value;
+        switch( escape )
+        {
+            case '"':
+            case '\\':
+            case '/':
+                return escape;
+
+            case 'b': return '\b';
+            case 'f': return '\f';
+            case 'n': return '\n';
+            case 'r': return '\r';
+            case 't': return '\t';
+
+            case 'u':
+            {
+                int i = -1;
+                auto code = this.takeWhile( _ => ++i < 4 );
+
+                if( code.length < 4 )
+                    throw new JsonParserException( this.markEnd(), "Unexpected end-of-input following escape sequence in string" );
+
+                try
+                {
+                    return code.to!( ushort )( 16 ).to!wchar;
+                }
+                catch( Throwable th )
+                {
+                    throw new JsonParserException( this.markEnd(), th.msg, __FILE__, __LINE__, th );
+                }
+            }
+
+            default:
+                throw new JsonParserException( this.markEnd(), "Unrecognized escape sequence '\\%s'".format( escape ) );
+        }
     }
 
-    private jstring takeWhile( bool delegate( C ) pred )
+    void markStart()
     {
-        jstring result;
+        this.spans ~= TextSpan( this.line, this.column, this.index );
+    }
 
+    TextSpan markEnd()
+    {
+        auto span = this.spans.back;
+        this.spans.popBack();
+
+        return span.withLength( this.index - span.index );
+    }
+
+    JsonToken makeToken( JsonToken.Type type, wstring text )
+    {
+        return new JsonToken( type, text, this.markEnd() );
+    }
+
+    wchar peek( int distance = 0 )
+    {
+        auto newIndex = this.index + distance;
+        if( newIndex < 0 || newIndex >= this.length )
+            return wchar.init;
+
+        return this.source[newIndex];
+    }
+
+    wchar take()
+    {
+        auto current = this.peek();
+        auto next    = this.peek( 1 );
+
+        if( current == '\r' )
+        {
+            if( next == '\n' )
+            {
+                ++this.index;
+                current = next;
+            }
+        }
+
+        if( next == '\n' )
+        {
+            ++this.line;
+            this.column = 0;
+        }
+
+        ++this.index;
+        ++this.column;
+
+        return current;
+    }
+
+    bool isNext( wstring search )
+    {
+        auto len = search.length;
+        if( this.index + len >= this.length )
+            return false;
+
+        return this.source[this.index .. this.index + len] == search;
+    }
+
+    bool takeIfNext( wstring search )
+    {
+        if( this.isNext( search ) )
+        {
+            foreach( _; 0 .. search.length )
+                this.take();
+        }
+
+        return false;
+    }
+
+    wstring takeWhile( Predicate pred )
+    {
+        wstring result;
         while( !this.eof && pred( this.peek() ) )
             result ~= this.take();
 
         return result;
     }
 
-    private bool takeIfNext( jstring s )
+    void skipWhile( Predicate pred )
     {
-        if( this.source.length < s.length )
-            return false;
-
-        foreach( i; 0 .. s.length )
-        {
-            if( s[i] != this.peek( i ) )
-                return false;
-        }
-
-        foreach( _; 0 .. s.length )
+        while( !this.eof && pred( this.peek() ) )
             this.take();
-
-        return true;
     }
 }

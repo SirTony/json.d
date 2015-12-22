@@ -1,0 +1,13 @@
+{
+    "name":        "json.d",
+    "description": "A JSON parsing and validation library.",
+    "authors":     [ "Tony Hudgins" ],
+    "homepage":    "https://github.com/SirTony/json.d",
+    "license":     "MIT",
+    "copyright":   "Copyright © 2015 Tony Hudgins",
+
+    "targetType":  "library",
+    "targetName":  "json",
+    "targetPath":  "bin",
+    "sourcePath":  "src"
+}

@@ -1,126 +1,92 @@
 module json.parser.token;
 
-private {
-    import std.string;
-    import std.traits;
+package struct TextSpan
+{
+    immutable size_t line;
+    immutable size_t column;
+    immutable size_t index;
+    immutable size_t length;
+
+    this() @disable;
+    this( size_t line, size_t column, size_t index, size_t length = size_t.init )
+    {
+        this.line = line;
+        this.column = column;
+        this.index = index;
+        this.length = length;
+    }
+
+    TextSpan withLength( size_t newLength )
+    {
+        return TextSpan( this.line, this.column, this.index, newLength );
+    }
 }
 
-package enum TokenType
+final package class JsonToken
 {
-    string,
-    identifier,
-    null_,
-    boolean,
-    number,
-    colon,
-    comma,
-    leftSquare,
-    rightSquare,
-    leftBrace,
-    rightBrace,
-    eof
-}
-
-package string identify( TokenType type )
-{
-    string name;
-
-    final switch( type )
+    enum Type
     {
-        case TokenType.string:
-            name = "string";
-            break;
+        String,
+        Number,
 
-        case TokenType.identifier:
-            name = "identifier";
-            break;
+        True,
+        False,
+        Null,
 
-        case TokenType.null_:
-            name = "null";
-            break;
+        LeftSquare,
+        RightSquare,
+        LeftBrace,
+        RightBrace,
 
-        case TokenType.number:
-            name = "number";
-            break;
+        Comma,
+        Colon,
 
-        case TokenType.colon:
-            name = "colon";
-            break;
-
-        case TokenType.comma:
-            name = "comma";
-            break;
-
-        case TokenType.leftSquare:
-            name = "lsquare";
-            break;
-
-        case TokenType.rightSquare:
-            name = "rsquare";
-            break;
-
-        case TokenType.leftBrace:
-            name = "lbrace";
-            break;
-
-        case TokenType.rightBrace:
-            name = "rbrace";
-            break;
-
-        case TokenType.boolean:
-            name = "boolean";
-            break;
-
-        case TokenType.eof:
-            return "EOF";
+        EndOfInput,
     }
 
-    return "T_" ~ name.toUpper();
-}
+    private wstring _text;
+    private TextSpan _span;
 
-final package struct Token( C ) if( isSomeChar!C )
-{
-    private alias immutable( C )[] jstring;
+    immutable Type type;
 
-    private jstring _contents;
-    private string _fileName;
-    private int _line;
-    private int _column;
-    private TokenType _type;
-
-    public jstring contents() @property
+    wstring text() const @property
     {
-        return this._contents.idup;
+        return this._text;
     }
 
-    public string fileName() @property
+    TextSpan span() const @property
     {
-        return this._fileName.idup;
+        return this._span;
     }
 
-    public int line() @property
+    this( Type type, wstring text, TextSpan span )
     {
-        return this._line;
+        this.type = type;
+        this._text = text;
+        this._span = span;
     }
 
-    public int column() @property
+    string identify()
     {
-        return this._column;
-    }
+        import std.utf;
+        import std.conv;
+        import std.string;
 
-    public TokenType type() @property
-    {
-        return this._type;
-    }
+        with( Type )
+        switch( this.type )
+        {
+            case Number:
+            case String:
+            case True:
+            case False:
+            case Null:
+                return to!( string )( this.type ).toLower();
 
-    public this() @disable;
+            case EndOfInput:
+                return "end-of-input";
 
-    public this( TokenType type, jstring contents, int line, int column, string fileName = null )
-    {
-        this._type = type;
-        this._contents = contents;
-        this._fileName = fileName;
-        this._line = line;
-        this._column = column;
+            default:
+                return this.text.toUTF8();
+        }
     }
 }

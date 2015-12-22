@@ -1,206 +1,164 @@
 module json.parser.parser;
 
+package import json.parser.lexer;
+
 private {
+    import std.utf;
     import std.conv;
-    import std.array;
     import std.string;
-    import std.traits;
-    import std.variant;
-    import std.algorithm;
-    import json.parser.lexer;
-    import json.parser.token;
-    import json.jsonexception;
+
+    import json.value;
+    import json.exception;
+
+    immutable wstring[JsonToken.Type] keywords;
+    immutable wchar[JsonToken.Type] punctuation;
 }
 
-final package class Parser( C ) if( isSomeChar!C )
+shared static this()
 {
-    private Token!( C )[] tokens;
-    private bool allowIdentifierKeys;
-    private bool allowTrailingCommas;
+    wstring[JsonToken.Type] _kwTemp;
+    foreach( k, v; json.parser.lexer.keywords )
+        _kwTemp[v] = k;
 
-    public this( Lexer!( C ) lexer )
+    wchar[JsonToken.Type] _punctTemp;
+    foreach( k, v; json.parser.lexer.punctuation )
+        _punctTemp[v] = k;
+
+    keywords    = cast(immutable)_kwTemp;
+    punctuation = cast(immutable)_punctTemp;
+}
+
+final package class Parser
+{
+private:
+    JsonToken[] tokens;
+    immutable size_t length;
+    size_t index;
+
+    public this( Lexer lexer )
     {
-        this.tokens = lexer.lex();
+        this.tokens = lexer.tokenize();
+        this.length = this.tokens.length;
     }
 
-    public Variant parse()
+    public JsonValue parse()
     {
-        Variant root = null;
+        this.index = 0;
+        auto value = this.parseValue();
+        this.take( JsonToken.Type.EndOfInput );
 
-        if( this.match( TokenType.eof ) )
-            return root;
-
-        root = this.parseValue();
-        this.take( TokenType.eof );
-
-        return root;
+        return value;
     }
 
-    private Variant parseValue()
+    JsonValue parseValue()
     {
         auto token = this.take();
-        Variant value;
-
+        with( JsonToken.Type )
         switch( token.type )
         {
-            case TokenType.number:
-                value = token.contents.to!real;
-                break;
-
-            case TokenType.string:
-                value = token.contents;
-                break;
-
-            case TokenType.leftBrace:
-                value = this.parseObject();
-                break;
-
-            case TokenType.leftSquare:
-                value = this.parseArray();
-                break;
-
-            case TokenType.null_:
-                value = null;
-                break;
-
-            case TokenType.boolean:
-                value = token.contents.to!bool;
-                break;
+            case String:     return JsonValue( token.text );
+            case Number:     return JsonValue( token.text.to!real );
+            case True:       return JsonValue.True;
+            case False:      return JsonValue.False;
+            case Null:       return JsonValue.Null;
+            case LeftBrace:  return this.parseObject();
+            case LeftSquare: return this.parseArray();
 
             default:
-                throw new JsonParserException( "Unexpected %s".format( token.type.identify() ), token.line, token.column, token.fileName );
+                throw new JsonParserException( token, "Unexpected '%s', expecting value".format( token.identify() ) );
         }
-
-        return value;
     }
 
-    private Variant parseObject()
+    JsonValue parseObject()
     {
-        Variant[Variant] object;
-        Variant result;
-
-        if( this.matchAndTake( TokenType.rightBrace ) )
+        with( JsonToken.Type )
         {
-            result = object;
-            return result;
-        }
-
-        while( true )
-        {
-            auto keyToken = this.takeFirstOf( TokenType.identifier, TokenType.string );
-
-            if( keyToken.type == TokenType.identifier && !this.allowIdentifierKeys )
-                throw new JsonParserException( "Unexpected %s, expecting %s.".format( keyToken.type.identify(), TokenType.string.identify() ), keyToken.line, keyToken.column, keyToken.fileName );
-
-            this.take( TokenType.colon );
-
-            Variant key = keyToken.contents;
-            Variant value = this.parseValue();
-
-            object[key] = value;
-
-            if( this.match( TokenType.comma ) && this.match( TokenType.rightBrace, 1 ) )
+            JsonValue[wstring] object;
+            while( !this.match( RightBrace ) )
             {
-                Token comma = this.peek();
-                throw new JsonParserException( "Unexpected %s, expecting %s.".format( comma.type.identify(), TokenType.rightBrace.identify() ), comma.line, comma.column, comma.fileName );
+                auto key = this.take( String );
+                this.take( Colon );
+
+                object[key.text] = this.parseValue();
+
+                if( !this.matchAndTake( Comma ) )
+                    break;
             }
 
-            this.matchAndTake( TokenType.comma );
-            if( this.match( TokenType.rightBrace ) )
-                break;
+            this.take( RightBrace );
+            return JsonValue( object );
         }
-
-        this.take( TokenType.rightBrace );
-
-        result = object;
-        return result;
     }
 
-    private Variant parseArray()
+    JsonValue parseArray()
     {
-        Variant[] array;
-        Variant result;
-
-        if( this.matchAndTake( TokenType.rightSquare ) )
+        with( JsonToken.Type )
         {
-            result = array;
-            return result;
-        }
-
-        while( true )
-        {
-            array ~= this.parseValue();
-
-            if( this.match( TokenType.comma ) && this.match( TokenType.rightSquare, 1 ) )
+            JsonValue[] array;
+            while( !this.match( RightSquare ) )
             {
-                auto comma = this.peek();
-                throw new JsonParserException( "Unexpected %s, expecting %s.".format( comma.type.identify(), TokenType.rightSquare.identify() ), comma.line, comma.column, comma.fileName );
+                array ~= this.parseValue();
+
+                if( !this.matchAndTake( Comma ) )
+                    break;
             }
 
-            this.matchAndTake( TokenType.comma );
-            if( this.match( TokenType.rightSquare ) )
-                break;
+            this.take( RightSquare );
+            return JsonValue( array );
         }
-
-        this.take( TokenType.rightSquare );
-
-        result = array;
-        return result;
     }
 
-    private Token!C peek( int distance = 0 )
+    JsonToken take()
     {
-        if( distance == 0 )
-            return this.tokens.front;
-        else
-            return this.tokens[distance];
+        debug assert( this.index < this.length );
+        return this.tokens[this.index++];
     }
 
-    private Token!C take()
+    JsonToken take( JsonToken.Type type )
     {
-        auto value = this.peek();
-        this.tokens.popFront();
-        return value;
+        auto token = this.take();
+        if( token.type != type )
+            throw new JsonParserException( token, "Unexpected '%s', expecting '%s'".format( token.identify(), this.identify( type ) ) );
+
+        return token;
     }
 
-    private Token!C take( TokenType type )
+    bool match( JsonToken.Type type )
     {
-        auto value = this.take();
-
-        if( value.type != type )
-            throw new JsonParserException( "Unexpected %s, expecting %s.".format( value.type.identify(), type.identify() ), value.line, value.column, value.fileName );
-
-        return value;
+        return this.tokens[this.index].type == type;
     }
 
-    private Token!C takeFirstOf( TokenType[] types ... )
-    {
-        foreach( type; types )
-        {
-            if( this.match( type ) )
-                return this.take();
-        }
-
-        auto head = types[0 .. $ - 2].map!( x => x.identify() ).array.join( ", " );
-        auto last   = types[$ - 1].identify();
-
-        Token top = this.peek();
-        throw new JsonParserException( "Unexpected %s, expecting %s or %s.".format( top.type.identify(), head, last ), top.line, top.column, top.fileName );
-    }
-
-    private bool match( TokenType type, int distance = 0 )
-    {
-        return this.peek( distance ).type == type;
-    }
-
-    private bool matchAndTake( TokenType type )
+    bool matchAndTake( JsonToken.Type type )
     {
         if( this.match( type ) )
         {
-            this.take();
+            this.take( type );
             return true;
         }
 
         return false;
+    }
+
+    string identify( JsonToken.Type type )
+    {
+        if( auto word = type in keywords )
+            return ( *word ).toUTF8();
+
+        if( auto mark = type in punctuation )
+            return [ *mark ].toUTF8();
+
+        with( JsonToken.Type )
+        switch( type )
+        {
+            case EndOfInput:
+                return "end-of-input";
+
+            case String:
+            case Number:
+                return to!( string )( type ).toLower();
+
+            default:
+                assert( false, "unhandled type '%s'".format( type ) );
+        }
     }
 }

@@ -1,6 +1,7 @@
 module json;
 
-public {
-    import json.functions;
-    import json.jsonexception;
-}
+/+
+    NOTE: All new imports and code changes should go in the file d.d instead.
++/
+
+public import json.d;
