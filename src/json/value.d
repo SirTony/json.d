@@ -6,6 +6,7 @@ private {
     import std.ascii;
     import std.array;
     import std.range;
+    import std.format;
     import std.string;
     import std.traits;
     import std.typecons;
@@ -16,10 +17,12 @@ private {
     enum isJsonValue( T ) = is( Unqual!T == JsonValue );
 }
 
-JsonValue toJson( T )( T value ) @property
+JsonValue toJson( T )( T value )
 {
     return JsonValue( value );
 }
+
+alias asJson = toJson;
 
 struct JsonValue
 {
@@ -78,10 +81,25 @@ struct JsonValue
 
     size_t length() const @property
     {
-        if( this.type != Type.Array )
-            throw new JsonException( "Value is not an array" );
-
+        this.enforceType!( Type.Array );
         return this.arrayValue.length;
+    }
+
+    bool empty() @property
+    {
+        return this.length == 0;
+    }
+
+    JsonValue front() @property
+    {
+        this.enforceType!( Type.Array );
+        return this.arrayValue.front;
+    }
+
+    JsonValue back() @property
+    {
+        this.enforceType!( Type.Array );
+        return this.arrayValue.back;
     }
 
     this() @disable;
@@ -123,7 +141,7 @@ struct JsonValue
             static if( isJsonValue!TValue )
                 objectValue[key.toUTF16()] = value;
             else
-                objectValue[key.toUTF16()] = value;
+                objectValue[key.toUTF16()] = JsonValue( value );
         }
         this( Type.Object );
     }
@@ -144,7 +162,7 @@ struct JsonValue
     {
         with( Type )
         {
-            static if( is( T : bool ) )
+            static if( is( T == bool ) )
                 return this.type == Boolean;
             else static if( isNumeric!T )
                 return this.type == Number;
@@ -177,8 +195,6 @@ struct JsonValue
                 return this.stringValue.toUTF8();
 
             case Null:
-                return "null";
-
             case Array:
             case Object:
                 return this.typename;
@@ -190,39 +206,51 @@ struct JsonValue
         return ( indented ? this.toPrettyJsonImpl( 1 ) : this.toPlainJsonImpl() ).to!T;
     }
 
+    void popFront()
+    {
+        this.enforceType!( Type.Array );
+        this.arrayValue.popFront();
+    }
+
+    void popBack()
+    {
+        this.enforceType!( Type.Array );
+        this.arrayValue.popBack();
+    }
+
+    JsonValue save()
+    {
+        this.enforceType!( Type.Array );
+        return JsonValue( this.arrayValue );
+    }
+
     size_t opDollar()
     {
         return this.length;
     }
 
-    JsonValue[] opSlice( size_t begin, size_t end )
+    JsonValue opSlice( size_t begin, size_t end )
     {
-        if( this.type != Type.Array )
-            throw new JsonException( "Value is not an array" );
-
-        return this.arrayValue[begin .. end];
+        this.enforceType!( Type.Array );
+        return JsonValue( this.arrayValue[begin .. end] );
     }
 
-    JsonValue[] opSliceAssign( R )( size_t begin, size_t end, R r ) if( isForwardRange!R )
+    JsonValue opSliceAssign( R )( size_t begin, size_t end, R r ) if( isForwardRange!R )
     {
-        if( this.type != Type.Array )
-            throw new JsonException( "Value is not an array" );
-
-        return this.arrayValue[begin .. end] = r.save().array;
+        this.enforceType!( Type.Array );
+        this.arrayValue[begin .. end] = r.save().array;
+        return this;
     }
 
     JsonValue opIndex( size_t i )
     {
-        if( this.type != Type.Array )
-            throw new JsonException( "Value is not an array" );
-
+        this.enforceType!( Type.Array );
         return this.arrayValue[i];
     }
 
     JsonValue opIndexAssign( T )( size_t i, T value )
     {
-        if( this.type != Type.Array )
-            throw new JsonException( "Value is not an array" );
+        this.enforceType!( Type.Array );
 
         static if( isJsonValue!T )
             return this.arrayValue[i] = value;
@@ -232,16 +260,13 @@ struct JsonValue
 
     JsonValue opIndex( T )( T key ) if( isSomeString!T )
     {
-        if( this.type != Type.Object )
-            throw new JsonException( "Value is not an object" );
-
+        this.enforceType!( Type.Object );
         return this.objectValue[key.toUTF16()];
     }
 
     JsonValue opIndexAssign( T, U )( T key, U value ) if( isSomeString!T )
     {
-        if( this.type != Type.Object )
-            throw new JsonException( "Value is not an object" );
+        this.enforceType!( Type.Object );
 
         static if( isJsonValue!U )
             return this.objectValue[key.toUTF16()] = value;
@@ -375,17 +400,13 @@ struct JsonValue
 
     T opCast( T )() if( isNumeric!T )
     {
-        if( this.type != Type.Number )
-            throw new JsonException( "Value is not a number" );
-
+        this.enforceType!( Type.Number );
         return this.numberValue.to!T;
     }
 
     T opCast( T )() if( isSomeString!T )
     {
-        if( this.type != Type.String )
-            throw new JsonException( "Value is not a string" );
-
+        this.enforceType!( Type.String );
         return this.stringValue.to!T;
     }
 
@@ -393,9 +414,7 @@ struct JsonValue
     {
         alias TElem = ElementType!T;
 
-        if( this.type != Type.Array )
-            throw new JsonException( "Value is not an array" );
-
+        this.enforceType!( Type.Array );
         return this.arrayValue
                    .map!( x => x.opCast!TElem )
                    .array;
@@ -406,8 +425,7 @@ struct JsonValue
         alias TKey   = KeyType!T;
         alias TValue = ValueType!T;
 
-        if( this.type != Type.Object )
-            throw new JsonException( "Value is not an object" );
+        this.enforceType!( Type.Object );
 
         T result;
         foreach( k, v; this.objectValue )
@@ -419,8 +437,7 @@ struct JsonValue
     // array foreach
     int opApply( int delegate( ref JsonValue ) apply )
     {
-        if( this.type != Type.Array )
-            throw new JsonException( "Value is not an array" );
+        this.enforceType!( Type.Array );
 
         int result;
         foreach( ref item; this.arrayValue )
@@ -436,8 +453,7 @@ struct JsonValue
     // object foreach
     int opApply( int delegate( const ref wstring, ref JsonValue ) apply )
     {
-        if( this.type != Type.Object )
-            throw new JsonException( "Value is not an object" );
+        this.enforceType!( Type.Object );
 
         int result;
         foreach( wstring k, ref v; this.objectValue )
@@ -452,116 +468,141 @@ struct JsonValue
 
     private string typename() const @property
     {
-        with( Type )
-        final switch( this.type )
-        {
-            case String:
-            case Number:
-            case Boolean:
-            case Array:
-            case Object:
-                return this.type.to!( string ).toLower();
+        return this.type.to!( string ).toLower();
+    }
 
-            case Null:
-                return "null";
-        }
+    private void enforceType( Type type )() const
+    {
+        enum name    = type.to!( string ).toLower();
+        enum article = type == Type.Object || type == Type.Array ? "an" : "a";
+        enum message = "Value is not %s %s".format( article, name );
+
+        if( this.type != type )
+            throw new JsonException( message );
     }
 
     private wstring toPlainJsonImpl()
     {
-        wstring result;
+        auto writer = appender!wstring;
+
         with( Type )
         final switch( this.type )
         {
             case Object:
             {
-                wstring[] pairs;
-                foreach( k, v; this.objectValue )
-                    pairs ~= "\"%s\":%s".format( k, v.toPlainJsonImpl() ).toUTF16();
+                writer.put( '{' );
 
-                result ~= "{%s}".format( pairs.join( "," ) ).toUTF16();
+                bool first = true;
+                foreach( k, v; this.objectValue )
+                {
+                    if( !first ) writer.put( ',' );
+                    writer.formattedWrite( `"%s":%s`, k, v.toPlainJsonImpl() );
+                    if( first ) first = false;
+                }
+
+                writer.put( '}' );
                 break;
             }
 
             case Array:
-                result ~= "[%s]".format(
-                              this.arrayValue
-                                  .map!( x => x.toPlainJsonImpl() )
-                                  .array
-                                  .join( "," )
-                          ).toUTF16();
+            {
+                writer.put( '[' );
+
+                bool first = true;
+                foreach( item; this.arrayValue )
+                {
+                    if( !first ) writer.put( ',' );
+                    writer.put( item.toPlainJsonImpl() );
+                    if( first ) first = false;
+                }
+
+                writer.put( ']' );
                 break;
+            }
 
             case String:
-                result ~= "\"%s\"".format( this.stringValue ).toUTF16();
+                writer.formattedWrite( `"%s"`, this.stringValue );
                 break;
 
             case Number:
+                writer.formattedWrite( "%g", this.numberValue );
+                break;
+
             case Boolean:
+                writer.put( this.booleanValue ? "true" : "false" );
+                break;
+
             case Null:
-                result ~= this.toString().toUTF16();
+                writer.put( "null" );
+                break;
         }
 
-        return result;
+        return writer.data;
     }
 
     private wstring toPrettyJsonImpl( size_t indentLevel )
     {
-        wstring result;
+        auto writer = appender!wstring;
 
         wstring indent() @property
         {
             return ""w.rightJustify( indentLevel * 4 );
         }
 
-        wstring glue() @property
-        {
-            return ",%s%s".format( newline, indent ).toUTF16();
-        }
-
         with( Type )
         final switch( this.type )
         {
             case Object:
             {
-                wstring[] pairs;
-                foreach( k, v; this.objectValue )
-                    pairs ~= "\"%s\": %s".format( k, v.toPrettyJsonImpl( indentLevel + 1 ) ).toUTF16();
+                writer.formattedWrite( "{%s%s", newline, indent );
 
-                result ~= "{%s%s%s%s%s}".format(
-                              newline,
-                              indent,
-                              pairs.join( glue ),
-                              newline,
-                              indent[0 .. $ - 4]
-                          ).toUTF16();
+                bool first = true;
+                foreach( k, v; this.objectValue )
+                {
+                    if( !first ) writer.formattedWrite( ",%s%s", newline, indent );
+                    writer.formattedWrite( `"%s": %s`, k, v.toPrettyJsonImpl( indentLevel + 1 ) );
+                    if( first ) first = false;
+                }
+
+                --indentLevel;
+                writer.formattedWrite( "%s%s}", newline, indent );
                 break;
             }
 
             case Array:
-                result ~= "[%s%s%s%s%s]".format(
-                              newline,
-                              indent,
-                              this.arrayValue
-                                  .map!( x => x.toPrettyJsonImpl( indentLevel + 1 ) )
-                                  .array
-                                  .join( glue ),
-                              newline,
-                              indent[0 .. $ - 4]
-                          ).toUTF16();
+            {
+                writer.formattedWrite( "[%s%s", newline, indent );
+
+                bool first = true;
+                foreach( item; this.arrayValue )
+                {
+                    if( !first ) writer.formattedWrite( ",%s%s", newline, indent );
+                    writer.put( item.toPrettyJsonImpl( indentLevel + 1 ) );
+                    if( first ) first = false;
+                }
+
+                --indentLevel;
+                writer.formattedWrite( "%s%s]", newline, indent );
                 break;
+            }
 
             case String:
-                result ~= "\"%s\"".format( this.stringValue ).toUTF16();
+                writer.formattedWrite( `"%s"`, this.stringValue );
                 break;
 
             case Number:
+                writer.formattedWrite( "%g", this.numberValue );
+                break;
+
             case Boolean:
+                writer.put( this.booleanValue ? "true" : "false" );
+                break;
+
             case Null:
-                result ~= this.toString().toUTF16();
+                writer.put( "null" );
                 break;
         }
 
-        return result;
+        return writer.data;
     }
 }
