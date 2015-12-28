@@ -116,7 +116,10 @@ struct JsonValue
         this( Type.Number );
     }
 
-    this( bool value )
+    // This is templated to avoid an issue where JsonValue( 1 ) or JsonValue( 0 )
+    // is erroneously constructed as boolean true and boolean false respectively
+    // rather than as a number.
+    this( T )( T value ) if( is( T == bool ) && !isNumeric!T )
     {
         this.booleanValue = value;
         this( Type.Boolean );
@@ -339,29 +342,62 @@ struct JsonValue
              : int.min;
     }
 
-    JsonValue opBinary( string op, T )( T value ) if( isNumeric!T && ( op == "+" || op == "-" || op == "*" || op == "/" || op == "^^" ) )
+    JsonValue opBinary( string op, T )( T value ) if( ( isJsonValue!T || isNumeric!T ) && ( op == "+" || op == "-" || op == "*" || op == "/" || op == "^^" ) )
     {
-        if( this.type != Type.Number )
-            throw new JsonException( "Cannot apply operator '%s' to types %s and number".format( op, this.typename ) );
-
-        return JsonValue( this.numberValue + value );
-    }
-
-    JsonValue opBinary( string op, T )( T value ) if( isIntegral!T && ( op == ">>" || op == ">>>" || op == "<<" || op == "&" || op == "|" || op == "^" ) )
-    {
-        if( this.type != Type.Number )
-            throw new JsonException( "Cannot apply operator '%s' to types %s and integer".format( op, this.typename ) );
-
-        static if( op == ">>>" )
+        static if( isJsonValue!T )
         {
-            ulong num = this.numberValue.to!ulong;
-            return num >>> value;
+            if( this.type != Type.Number || value.type != Type.Number )
+                throw new JsonException( "Cannot apply operator '%s' to types %s and %s".format( op, this.typename, value.typename ) );
+
+            return JsonValue( mixin( "this.numberValue" ~ op ~ "value.numberValue" ) );
         }
         else
         {
-            long num = this.numberValue.to!long;
-            return mixin( "num" ~ op ~ "value" );
+            if( this.type != Type.Number )
+                throw new JsonException( "Cannot apply operator '%s' to types %s and number".format( op, this.typename ) );
+
+            return JsonValue( mixin( "this.numberValue" ~ op ~ "value" ) );
         }
+    }
+
+    JsonValue opBinaryRight( string op, T )( T value ) if( isNumeric!T && ( op == "+" || op == "-" || op == "*" || op == "/" || op == "^^" ) )
+    {
+        return JsonValue( value ).opBinary!( op )( this );
+    }
+
+    JsonValue opBinary( string op, T )( T value ) if( ( isJsonValue!T || isIntegral!T ) && ( op == ">>" || op == ">>>" || op == "<<" || op == "&" || op == "|" || op == "^" ) )
+    {
+        static if( isJsonValue!T )
+        {
+            if( this.type != Type.Number || value.type != Type.Number )
+                throw new JsonException( "Cannot apply operator '%s' to types %s and %s".format( op, this.typename, value.typename ) );
+
+            static if( op == ">>>" )
+                ulong x = ( this.numberValue < 0 ? this.numberValue * -1 : this.numberValue ).to!ulong;
+            else
+                long x = this.numberValue.to!long;
+
+            long y = value.numberValue.to!byte;
+
+            return JsonValue( mixin( "x" ~ op ~ "y" ) );
+        }
+        else
+        {
+            if( this.type != Type.Number )
+                throw new JsonException( "Cannot apply operator '%s' to types %s and integer".format( op, this.typename ) );
+
+            static if( op == ">>>" )
+                ulong num = ( this.numberValue < 0 ? this.numberValue * -1 : this.numberValue ).to!ulong;
+            else
+                long num = this.numberValue.to!long;
+
+            return JsonValue( mixin( "num" ~ op ~ "value" ) );
+        }
+    }
+
+    JsonValue opBinaryRight( string op, T )( T value ) if( isIntegral!T && ( op == ">>" || op == ">>>" || op == "<<" || op == "&" || op == "|" || op == "^" ) )
+    {
+        return JsonValue( value ).opBinary!( op )( this );
     }
 
     JsonValue opBinary( string op, R )( R r ) if( op == "~" && isForwardRange!R )
@@ -378,6 +414,11 @@ struct JsonValue
             throw new JsonException( "Cannot concatenate typ %s and string".format( this.typename ) );
 
         return JsonValue( this.stringValue ~ value.toUTF16() );
+    }
+
+    JsonValue opBinaryRight( string op, T )( T value ) if( op == "~" )
+    {
+        return JsonValue( value ).opBinary!( "~" )( this );
     }
 
     JsonValue* opBinaryRight( string op, T )( T key ) if( op == "in" && isSomeString!T )
