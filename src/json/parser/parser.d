@@ -1,27 +1,25 @@
 module json.parser.parser;
 
-package import json.parser.lexer;
-
 private {
-    import std.utf;
+    import json.parser.lexer;
+    import json.value;
+
     import std.conv;
     import std.string;
+    import std.utf;
 
-    import json.value;
-    import json.exception;
-
-    immutable wstring[JsonToken.Type] keywords;
-    immutable wchar[JsonToken.Type] punctuation;
+    static immutable dstring[JsonToken.Type] keywords;
+    static immutable dchar[JsonToken.Type] punctuation;
 }
 
 shared static this()
 {
-    wstring[JsonToken.Type] _kwTemp;
-    foreach( k, v; json.parser.lexer.keywords )
+    dstring[JsonToken.Type] _kwTemp;
+    foreach( k, v; json.parser.lexer.Keywords )
         _kwTemp[v] = k;
 
-    wchar[JsonToken.Type] _punctTemp;
-    foreach( k, v; json.parser.lexer.punctuation )
+    dchar[JsonToken.Type] _punctTemp;
+    foreach( k, v; json.parser.lexer.Punctuation )
         _punctTemp[v] = k;
 
     keywords    = cast(immutable)_kwTemp;
@@ -57,7 +55,18 @@ private:
         switch( token.type )
         {
             case String:     return JsonValue( token.text );
-            case Number:     return JsonValue( token.text.to!real );
+
+            case Number:
+            {
+                with( JsonToken.NumberType )
+                final switch( token.numberType )
+                {
+                    case signed:   return JsonValue( token.text.to!long );
+                    case unsigned: return JsonValue( token.text.to!ulong );
+                    case floating: return JsonValue( token.text.to!real );
+                }
+            }
+
             case True:       return JsonValue.True;
             case False:      return JsonValue.False;
             case Null:       return JsonValue.Null;
@@ -73,7 +82,7 @@ private:
     {
         with( JsonToken.Type )
         {
-            JsonValue[wstring] object;
+            JsonValue[dstring] object;
             while( !this.match( RightBrace ) )
             {
                 auto key = this.take( String );
@@ -118,7 +127,13 @@ private:
     {
         auto token = this.take();
         if( token.type != type )
-            throw new JsonParserException( token, "Unexpected '%s', expecting '%s'".format( token.identify(), this.identify( type ) ) );
+            throw new JsonParserException(
+                token,
+                "Unexpected '%s', expecting '%s'".format(
+                    token.identify(),
+                    this.identify( type )
+                )
+            );
 
         return token;
     }

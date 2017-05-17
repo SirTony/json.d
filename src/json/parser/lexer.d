@@ -1,31 +1,29 @@
 module json.parser.lexer;
 
-package import json.parser.token;
-
 private {
-    import std.utf;
-    import std.uni;
+    import json.value : JsonException;
+
+    import std.algorithm;
     import std.conv;
+    import std.functional;
     import std.range;
     import std.string;
     import std.traits;
-    import std.algorithm;
-    import std.functional;
+    import std.uni;
+    import std.utf;
 
-    import json.exception;
-
-    alias Tokenizer = bool delegate( wchar, out JsonToken );
-    alias Predicate = bool delegate( wchar );
+    alias Tokenizer = bool delegate( dchar, out JsonToken );
+    alias Predicate = bool delegate( dchar );
 }
 
 package {
-    enum JsonToken.Type[wstring] keywords = [
+    enum JsonToken.Type[dstring] Keywords = [
         "null":  JsonToken.Type.Null,
         "true":  JsonToken.Type.True,
         "false": JsonToken.Type.False,
     ];
 
-    enum JsonToken.Type[wchar] punctuation = [
+    enum JsonToken.Type[dchar] Punctuation = [
         '{': JsonToken.Type.LeftBrace,
         '}': JsonToken.Type.RightBrace,
         '[': JsonToken.Type.LeftSquare,
@@ -35,10 +33,137 @@ package {
     ];
 }
 
+final class JsonParserException : JsonException
+{
+    private TextSpan _span;
+    TextSpan span() const pure nothrow @safe @property
+    {
+        return this._span;
+    }
+
+package:
+    this( TextSpan span, string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null )
+    {
+        this._span = span;
+        super( msg, file, line, next );
+    }
+
+    this( JsonToken token, string msg, string file = __FILE__, size_t line = __LINE__, Throwable next = null )
+    {
+        this._span = token.span;
+        super( msg, file, line, next );
+    }
+}
+
+package struct TextSpan
+{
+    immutable size_t line;
+    immutable size_t column;
+    immutable size_t index;
+    immutable size_t length;
+
+    this() @disable;
+    this( size_t line, size_t column, size_t index, size_t length = size_t.init )
+    {
+        this.line = line;
+        this.column = column;
+        this.index = index;
+        this.length = length;
+    }
+
+    TextSpan withLength( size_t newLength )
+    {
+        return TextSpan( this.line, this.column, this.index, newLength );
+    }
+}
+
+final package class JsonToken
+{
+    enum Type
+    {
+        String,
+        Number,
+
+        True,
+        False,
+        Null,
+
+        LeftSquare,
+        RightSquare,
+        LeftBrace,
+        RightBrace,
+
+        Comma,
+        Colon,
+
+        EndOfInput,
+    }
+
+    enum NumberType
+    {
+        signed,
+        unsigned,
+        floating,
+    }
+
+    private dstring _text;
+    private TextSpan _span;
+
+    immutable Type type;
+    immutable NumberType numberType = void;
+
+    dstring text() const @property
+    {
+        return this._text;
+    }
+
+    TextSpan span() const @property
+    {
+        return this._span;
+    }
+
+    this( Type type, dstring text, TextSpan span )
+    {
+        this.type = type;
+        this._text = text;
+        this._span = span;
+    }
+
+    this( NumberType numType, dstring text, TextSpan span )
+    {
+        this.numberType = numType;
+        this( Type.Number, text, span );
+    }
+
+    string identify()
+    {
+        import std.utf;
+        import std.conv;
+        import std.string;
+
+        with( Type )
+        switch( this.type )
+        {
+            case Number:
+            case String:
+            case True:
+            case False:
+            case Null:
+                return to!( string )( this.type ).toLower();
+
+            case EndOfInput:
+                return "end-of-input";
+
+            default:
+                return this.text.toUTF8();
+        }
+    }
+}
+
 final package class Lexer
 {
 private:
-    wstring source;
+    dstring source;
     immutable size_t length;
     size_t index;
     size_t line;
@@ -46,15 +171,15 @@ private:
     TextSpan[] spans;
     Tokenizer[] tokenizers;
 
-    bool eof() const @property
+    bool eof() const pure nothrow @safe @property
     {
         return this.index >= this.length;
     }
 
-    public this( wstring source )
+    public this( S )( S source ) if( isSomeString!S )
     {
-        this.source = source;
-        this.length = source.length;
+        this.source = source.toUTF32();
+        this.length = this.source.length;
         this.tokenizers = [
             &this.tryLexString,
             &this.tryLexNumber,
@@ -89,16 +214,16 @@ private:
         return tokens;
     }
 
-    bool tryLexString( wchar c, out JsonToken token )
+    bool tryLexString( dchar c, out JsonToken token )
     {
         if( c != '"' )
             return false;
 
         this.markStart();
-        auto terminator = this.take();
+        immutable terminator = this.take();
 
-        wstring text;
-        wchar   next;
+        dstring text;
+        dchar   next;
         while( !this.eof && ( next = this.peek() ) != terminator )
         {
             if( next.isControl && !next.isSpace )
@@ -122,16 +247,17 @@ private:
         return true;
     }
 
-    bool tryLexNumber( wchar c, out JsonToken token )
+    bool tryLexNumber( dchar c, out JsonToken token )
     {
-        if( !c.isNumber )
+        if( !c.isNumber && c != '-' )
             return false;
 
         bool hasDecimal;
         bool hasExponent;
-        bool forceTake;
+        bool forceTake = c == '-';
+        bool signed = c == '-';
 
-        bool pred( wchar ch )
+        bool pred( dchar ch )
         {
             if( forceTake )
             {
@@ -169,29 +295,36 @@ private:
 
         this.markStart();
         auto text = this.takeWhile( &pred );
-        token = this.makeToken( JsonToken.Type.Number, text );
+        auto type = hasDecimal || hasExponent
+                  ? JsonToken.NumberType.floating
+                  : ( signed ? JsonToken.NumberType.signed
+                             : JsonToken.NumberType.unsigned );
+        token = this.makeToken( type, text );
         return true;
     }
 
-    bool tryLexWord( wchar c, out JsonToken token )
+    bool tryLexWord( dchar c, out JsonToken token )
     {
         if( !c.isAlpha && c != '_' )
             return false;
 
         this.markStart();
         auto text = this.takeWhile( ch => ch.isAlpha || ch.isNumber || ch == '_' );
-        if( auto type = text in keywords )
+        if( auto type = text in Keywords )
         {
             token = this.makeToken( *type, text );
             return true;
         }
 
-        throw new JsonParserException( this.markEnd(), "Unexpected '%s' (did you forget to quote an object key?)".format( text ) );
+        throw new JsonParserException(
+            this.markEnd(),
+            "Unexpected '%s' (did you forget to quote an object key?)".format( text )
+        );
     }
 
-    bool tryLexPunctuation( wchar c, out JsonToken token )
+    bool tryLexPunctuation( dchar c, out JsonToken token )
     {
-        foreach( ch, type; punctuation )
+        foreach( ch, type; Punctuation )
         {
             if( c == ch )
             {
@@ -204,10 +337,13 @@ private:
         return false;
     }
 
-    wchar handleEscapeSequence( wchar escape )
+    dchar handleEscapeSequence( dchar escape )
     {
         if( this.eof )
-            throw new JsonParserException( this.markEnd(), "Unexpected end-of-input following escape sequence in string" );
+            throw new JsonParserException(
+                this.markEnd(),
+                "Unexpected end-of-input following escape sequence in string"
+            );
 
         switch( escape )
         {
@@ -232,7 +368,7 @@ private:
 
                 try
                 {
-                    return code.to!( ushort )( 16 ).to!wchar;
+                    return code.to!( ushort )( 16 ).to!dchar;
                 }
                 catch( Throwable th )
                 {
@@ -258,24 +394,29 @@ private:
         return span.withLength( this.index - span.index );
     }
 
-    JsonToken makeToken( JsonToken.Type type, wstring text )
+    JsonToken makeToken( JsonToken.Type type, dstring text )
     {
         return new JsonToken( type, text, this.markEnd() );
     }
 
-    wchar peek( int distance = 0 )
+    JsonToken makeToken( JsonToken.NumberType numType, dstring text )
+    {
+        return new JsonToken( numType, text, this.markEnd() );
+    }
+
+    dchar peek( int distance = 0 )
     {
         auto newIndex = this.index + distance;
         if( newIndex < 0 || newIndex >= this.length )
-            return wchar.init;
+            return dchar.init;
 
         return this.source[newIndex];
     }
 
-    wchar take()
+    dchar take()
     {
-        auto current = this.peek();
-        auto next    = this.peek( 1 );
+        auto current   = this.peek();
+        immutable next = this.peek( 1 );
 
         if( current == '\r' )
         {
@@ -298,7 +439,7 @@ private:
         return current;
     }
 
-    bool isNext( wstring search )
+    bool isNext( dstring search )
     {
         auto len = search.length;
         if( this.index + len >= this.length )
@@ -307,7 +448,7 @@ private:
         return this.source[this.index .. this.index + len] == search;
     }
 
-    bool takeIfNext( wstring search )
+    bool takeIfNext( dstring search )
     {
         if( this.isNext( search ) )
         {
@@ -318,9 +459,9 @@ private:
         return false;
     }
 
-    wstring takeWhile( Predicate pred )
+    dstring takeWhile( Predicate pred )
     {
-        wstring result;
+        dstring result;
         while( !this.eof && pred( this.peek() ) )
             result ~= this.take();
 

@@ -1,20 +1,24 @@
 module json.value;
 
 private {
-    import std.utf;
-    import std.conv;
-    import std.ascii;
-    import std.array;
-    import std.range;
-    import std.format;
-    import std.string;
-    import std.traits;
-    import std.typecons;
     import std.algorithm;
-
-    import json.exception;
+    import std.array;
+    import std.ascii;
+    import std.conv;
+    import std.format;
+    import std.range;
+    import std.string;
+    import traits = std.traits;
+    import std.typecons;
+    import std.utf;
 
     enum isJsonValue( T ) = is( Unqual!T == JsonValue );
+}
+
+class JsonException : Exception
+{
+    import std.exception : basicExceptionCtors;
+    mixin basicExceptionCtors;
 }
 
 JsonValue toJson( T )( T value )
@@ -28,12 +32,21 @@ struct JsonValue
 {
     enum Type
     {
+        Null,
+
         String,
         Number,
-        Boolean,
+        True,
+        False,
         Array,
         Object,
-        Null,
+    }
+
+    private enum NumberType
+    {
+        signed,
+        unsigned,
+        floating,
     }
 
     private static Nullable!JsonValue _null;
@@ -66,66 +79,130 @@ struct JsonValue
 
     private {
         Type _type;
+        NumberType _numType = void;
 
-        wstring stringValue            = void;
-        real numberValue               = void;
-        bool booleanValue              = void;
-        JsonValue[] arrayValue         = void;
-        JsonValue[wstring] objectValue = void;
+        union {
+            dstring stringValue            = void;
+            long signed                    = void;
+            ulong unsigned                 = void;
+            real floating                  = void;
+            JsonValue[] arrayValue         = void;
+            JsonValue[dstring] objectValue = void;
+        }
     }
 
-    Type type() const @property
+    Type type() const pure nothrow @safe @property
     {
         return this._type;
     }
 
-    size_t length() const @property
+    // convenience is* properties
+    bool isObject() const pure nothrow @safe @property
+    {
+        return this.type == Type.Object;
+    }
+
+    bool isArray() const pure nothrow @safe @property
+    {
+        return this.type == Type.Array;
+    }
+
+    bool isBool() const pure nothrow @safe @property
+    {
+        return this.type == Type.True || this.type == Type.False;
+    }
+
+    bool isString() const pure nothrow @safe @property
+    {
+        return this.type == Type.String;
+    }
+
+    bool isNumber() const pure nothrow @safe @property
+    {
+        return this.type == Type.Number;
+    }
+
+    bool isSigned() const pure nothrow @safe @property
+    {
+        return this.isNumber && this._numType == NumberType.signed;
+    }
+
+    bool isUnsigned() const pure nothrow @safe @property
+    {
+        return this.isNumber && this._numType == NumberType.unsigned;
+    }
+
+    bool isInteger() const pure nothrow @safe @property
+    {
+        return this.isSigned || this.isUnsigned;
+    }
+
+    bool isFloat() const pure nothrow @safe @property
+    {
+        return this.isNumber && this._numType == NumberType.floating;
+    }
+
+    bool isNull() const pure nothrow @safe @property
+    {
+        return this.type == Type.Null;
+    }
+
+    size_t length() const pure @property
     {
         this.enforceType!( Type.Array );
         return this.arrayValue.length;
     }
 
-    bool empty() @property
+    bool empty() const pure @system @property
     {
         return this.length == 0;
     }
 
-    JsonValue front() @property
+    JsonValue front() const pure @property
     {
         this.enforceType!( Type.Array );
         return this.arrayValue.front;
     }
 
-    JsonValue back() @property
+    JsonValue back() const pure @property
     {
         this.enforceType!( Type.Array );
         return this.arrayValue.back;
     }
 
-    this() @disable;
-
-    this( T )( T value ) if( isSomeString!T )
+    this( T )( T value ) if( traits.isSomeString!T )
     {
-        this.stringValue = value.toUTF16();
+        this.stringValue = value.toUTF32();
         this( Type.String );
     }
 
-    this( T )( T value ) if( isNumeric!T )
+    this( T )( T value ) if( traits.isSigned!T && traits.isIntegral!T )
     {
-        this.numberValue = cast(real)value;
+        this.signed = value;
+        this._numType = NumberType.signed;
         this( Type.Number );
     }
 
-    // This is templated to avoid an issue where JsonValue( 1 ) or JsonValue( 0 )
-    // is erroneously constructed as boolean true and boolean false respectively
-    // rather than as a number.
-    this( T )( T value ) if( is( T == bool ) && !isNumeric!T )
+    this( T )( T value ) if( traits.isUnsigned!T )
     {
-        this.booleanValue = value;
-        this( Type.Boolean );
+        this.unsigned = value;
+        this._numType = NumberType.unsigned;
+        this( Type.Number );
     }
 
-    this( R )( R r ) if( isForwardRange!R && !isSomeString!R )
+    this( T )( T value ) if( traits.isFloatingPoint!T )
+    {
+        this.floating = value;
+        this._numType = NumberType.floating;
+        this( Type.Number );
+    }
+
+    this( bool value )
+    {
+        this( value ? Type.True : Type.False );
+    }
+
+    this( R )( R r ) if( isForwardRange!R && !traits.isSomeString!R )
     {
         foreach( item; r.save() )
         {
@@ -137,16 +214,21 @@ struct JsonValue
         this( Type.Array );
     }
 
-    this( TKey, TValue )( TValue[TKey] assoc ) if( isSomeString!TKey )
+    this( TKey, TValue )( TValue[TKey] assoc ) if( traits.isSomeString!TKey )
     {
         foreach( key, value; assoc )
         {
             static if( isJsonValue!TValue )
-                objectValue[key.toUTF16()] = value;
+                objectValue[key.toUTF32()] = value;
             else
-                objectValue[key.toUTF16()] = JsonValue( value );
+                objectValue[key.toUTF32()] = JsonValue( value );
         }
         this( Type.Object );
+    }
+
+    this( typeof( null ) )
+    {
+        this( Type.Null );
     }
 
     private this( Type type )
@@ -154,30 +236,11 @@ struct JsonValue
         this._type = type;
     }
 
-    bool hasKey( T )( T key ) if( isSomeString!T )
+    bool hasKey( T )( T key ) if( traits.isSomeString!T )
     {
         return this.type == Type.Object
-             ? ( key.toUTF16() in this.objectValue ) !is null
+             ? ( key.toUTF32() in this.objectValue ) !is null
              : false;
-    }
-
-    bool istype( T )()
-    {
-        with( Type )
-        {
-            static if( is( T == bool ) )
-                return this.type == Boolean;
-            else static if( isNumeric!T )
-                return this.type == Number;
-            else static if( isSomeString!T )
-                return this.type == String;
-            else static if( isDynamicArray!T )
-                return this.type == Array;
-            else static if( isAssociativeArray!T )
-                return this.type == Object;
-            else
-                return false;
-        }
     }
 
     alias to = this.opCast;
@@ -188,14 +251,21 @@ struct JsonValue
         with( Type )
         final switch( this.type )
         {
-            case Boolean:
-                return this.booleanValue.to!string;
+            case True: return "true";
+            case False: return "false";
 
             case Number:
-                return this.numberValue.to!string;
+            {
+                with( NumberType )
+                final switch( this._numType )
+                {
+                    case signed:   return this.signed.to!string;
+                    case unsigned: return this.unsigned.to!string;
+                    case floating: return this.floating.to!string;
+                }
+            }
 
-            case String:
-                return this.stringValue.toUTF8();
+            case String: return this.stringValue.toUTF8();
 
             case Null:
             case Array:
@@ -204,7 +274,7 @@ struct JsonValue
         }
     }
 
-    T toJsonString( T = wstring )( bool indented = false ) if( isSomeString!T )
+    T toJsonString( T = string )( bool indented = false ) if( traits.isSomeString!T )
     {
         return ( indented ? this.toPrettyJsonImpl( 1 ) : this.toPlainJsonImpl() ).to!T;
     }
@@ -261,20 +331,20 @@ struct JsonValue
             return this.arrayValue[i] = JsonValue( value );
     }
 
-    JsonValue opIndex( T )( T key ) if( isSomeString!T )
+    JsonValue opIndex( T )( T key ) if( traits.isSomeString!T )
     {
         this.enforceType!( Type.Object );
-        return this.objectValue[key.toUTF16()];
+        return this.objectValue[key.toUTF32()];
     }
 
-    JsonValue opIndexAssign( T, U )( T key, U value ) if( isSomeString!T )
+    JsonValue opIndexAssign( T, U )( T key, U value ) if( traits.isSomeString!T )
     {
         this.enforceType!( Type.Object );
 
         static if( isJsonValue!U )
-            return this.objectValue[key.toUTF16()] = value;
+            return this.objectValue[key.toUTF32()] = value;
         else
-            return this.objectValue[key.toUTF16()] = JsonValue( value );
+            return this.objectValue[key.toUTF32()] = JsonValue( value );
     }
 
     JsonValue opAssign( T )( T value )
@@ -282,35 +352,7 @@ struct JsonValue
         static if( !isJsonValue!T )
             this = JsonValue( value );
         else
-        {
-            this._type = value.type;
-
-            with( Type )
-            final switch( value.type )
-            {
-                case String:
-                    this.stringValue = value.stringValue;
-                    break;
-
-                case Number:
-                    this.numberValue = value.numberValue;
-                    break;
-
-                case Boolean:
-                    this.booleanValue = value.booleanValue;
-                    break;
-
-                case Array:
-                    this.arrayValue = value.arrayValue;
-                    break;
-
-                case Object:
-                    this.objectValue = value.objectValue;
-                    break;
-
-                case Null: break;
-            }
-        }
+            this = value;
 
         return this;
     }
@@ -328,130 +370,39 @@ struct JsonValue
             return this.opCmp( value ) == 0;
     }
 
-    int opCmp( T )( ref const T value ) const if( isNumeric!T )
-    {
-        return this.type == Type.Number
-            ? cast(int)( this.numberValue - value )
-            : int.min;
-    }
-
-    int opCmp( ref const JsonValue value ) const
-    {
-        return this.type == value.type && this.type == Type.Number
-             ? cast(int)( this.numberValue - value.numberValue )
-             : int.min;
-    }
-
-    JsonValue opBinary( string op, T )( T value ) if( ( isJsonValue!T || isNumeric!T ) && ( op == "+" || op == "-" || op == "*" || op == "/" || op == "^^" ) )
-    {
-        static if( isJsonValue!T )
-        {
-            if( this.type != Type.Number || value.type != Type.Number )
-                throw new JsonException( "Cannot apply operator '%s' to types %s and %s".format( op, this.typename, value.typename ) );
-
-            return JsonValue( mixin( "this.numberValue" ~ op ~ "value.numberValue" ) );
-        }
-        else
-        {
-            if( this.type != Type.Number )
-                throw new JsonException( "Cannot apply operator '%s' to types %s and number".format( op, this.typename ) );
-
-            return JsonValue( mixin( "this.numberValue" ~ op ~ "value" ) );
-        }
-    }
-
-    JsonValue opBinaryRight( string op, T )( T value ) if( isNumeric!T && ( op == "+" || op == "-" || op == "*" || op == "/" || op == "^^" ) )
-    {
-        return JsonValue( value ).opBinary!( op )( this );
-    }
-
-    JsonValue opBinary( string op, T )( T value ) if( ( isJsonValue!T || isIntegral!T ) && ( op == ">>" || op == ">>>" || op == "<<" || op == "&" || op == "|" || op == "^" ) )
-    {
-        static if( isJsonValue!T )
-        {
-            if( this.type != Type.Number || value.type != Type.Number )
-                throw new JsonException( "Cannot apply operator '%s' to types %s and %s".format( op, this.typename, value.typename ) );
-
-            static if( op == ">>>" )
-                ulong x = ( this.numberValue < 0 ? this.numberValue * -1 : this.numberValue ).to!ulong;
-            else
-                long x = this.numberValue.to!long;
-
-            long y = value.numberValue.to!byte;
-
-            return JsonValue( mixin( "x" ~ op ~ "y" ) );
-        }
-        else
-        {
-            if( this.type != Type.Number )
-                throw new JsonException( "Cannot apply operator '%s' to types %s and integer".format( op, this.typename ) );
-
-            static if( op == ">>>" )
-                ulong num = ( this.numberValue < 0 ? this.numberValue * -1 : this.numberValue ).to!ulong;
-            else
-                long num = this.numberValue.to!long;
-
-            return JsonValue( mixin( "num" ~ op ~ "value" ) );
-        }
-    }
-
-    JsonValue opBinaryRight( string op, T )( T value ) if( isIntegral!T && ( op == ">>" || op == ">>>" || op == "<<" || op == "&" || op == "|" || op == "^" ) )
-    {
-        return JsonValue( value ).opBinary!( op )( this );
-    }
-
-    JsonValue opBinary( string op, R )( R r ) if( op == "~" && isForwardRange!R )
-    {
-        if( this.type != Type.Array )
-            throw new JsonException( "Cannot concatenate type %s and range".format( this.typename ) );
-
-        return JsonValue( this.arrayValue ~ r.save().array );
-    }
-
-    JsonValue opBinary( string op, T )( T value ) if( op == "~" && isSomeString!T )
-    {
-        if( this.type != Type.String )
-            throw new JsonException( "Cannot concatenate typ %s and string".format( this.typename ) );
-
-        return JsonValue( this.stringValue ~ value.toUTF16() );
-    }
-
-    JsonValue opBinaryRight( string op, T )( T value ) if( op == "~" )
-    {
-        return JsonValue( value ).opBinary!( "~" )( this );
-    }
-
-    JsonValue* opBinaryRight( string op, T )( T key ) if( op == "in" && isSomeString!T )
-    {
-        if( this.type != Type.Object )
-            throw new JsonException( "Cannot apply operator '%s' to types %s and string".format( this.typename ) );
-
-        return key.toUTF16() in this.objectValue;
-    }
-
-    bool opBinaryRight( string op, T )( T key ) if( op == "!in" && isSomeString!T )
-    {
-        return this.opBinaryRight!( "in", T )( key ) is null;
-    }
-
     T opCast( T : bool )()
     {
-        return this.type == Type.Boolean ? this.booleanValue : true;
+        return this.type == Type.True;
     }
 
-    T opCast( T )() if( isNumeric!T )
+    T opCast( T )() if( traits.isSigned!T && traits.isIntegral!T )
     {
-        this.enforceType!( Type.Number );
-        return this.numberValue.to!T;
+        this.enforceNumType!( NumberType.signed );
+
+        return cast(T)this.signed;
     }
 
-    T opCast( T )() if( isSomeString!T )
+    T opCast( T )() if( traits.isUnsigned!T )
+    {
+        this.enforceNumType!( NumberType.unsigned );
+
+        return cast(T)this.unsigned;
+    }
+
+    T opCast( T )() if( traits.isFloatingPoint!T )
+    {
+        this.enforceNumType!( NumberType.floating );
+
+        return cast(T)this.floating;
+    }
+
+    T opCast( T )() if( traits.isSomeString!T )
     {
         this.enforceType!( Type.String );
         return this.stringValue.to!T;
     }
 
-    T opCast( T )() if( isDynamicArray!T && !isSomeString!T )
+    T opCast( T )() if( traits.isDynamicArray!T && !traits.isSomeString!T )
     {
         alias TElem = ElementType!T;
 
@@ -461,7 +412,7 @@ struct JsonValue
                    .array;
     }
 
-    T opCast( T )() if( isAssociativeArray!T )
+    T opCast( T )() if( traits.isAssociativeArray!T )
     {
         alias TKey   = KeyType!T;
         alias TValue = ValueType!T;
@@ -492,12 +443,12 @@ struct JsonValue
     }
 
     // object foreach
-    int opApply( int delegate( const ref wstring, ref JsonValue ) apply )
+    int opApply( int delegate( const ref dstring, ref JsonValue ) apply )
     {
         this.enforceType!( Type.Object );
 
         int result;
-        foreach( wstring k, ref v; this.objectValue )
+        foreach( dstring k, ref v; this.objectValue )
         {
             result = apply( k, v );
             if( result != 0 )
@@ -512,7 +463,7 @@ struct JsonValue
         return this.type.to!( string ).toLower();
     }
 
-    private void enforceType( Type type )() const
+    private void enforceType( Type type )() const pure @safe
     {
         enum name    = type.to!( string ).toLower();
         enum article = type == Type.Object || type == Type.Array ? "an" : "a";
@@ -522,9 +473,20 @@ struct JsonValue
             throw new JsonException( message );
     }
 
-    private wstring toPlainJsonImpl()
+    private void enforceNumType( NumberType type )() const pure @safe
     {
-        auto writer = appender!wstring;
+        this.enforceType!( Type.Number );
+        enum name = type.to!string ~ ( type == NumberType.floating ? " point" : "" );
+        enum article = type == NumberType.unsigned ? "an" : "a";
+        enum message = "Value is not %s %s number".format( article, name );
+
+        if( this.type != Type.Number || this._numType != type )
+            throw new JsonException( message );
+    }
+
+    private dstring toPlainJsonImpl()
+    {
+        auto writer = appender!dstring;
 
         with( Type )
         final switch( this.type )
@@ -566,11 +528,28 @@ struct JsonValue
                 break;
 
             case Number:
-                writer.formattedWrite( "%g", this.numberValue );
-                break;
+            {
+                with( NumberType )
+                final switch( this._numType )
+                {
+                    case signed:
+                        writer.formattedWrite( "%d", this.signed );
+                        break;
+                    
+                    case unsigned:
+                        writer.formattedWrite( "%d", this.unsigned );
+                        break;
+                    
+                    case floating:
+                        writer.formattedWrite( "%g", this.floating );
+                        break;
+                }
 
-            case Boolean:
-                writer.put( this.booleanValue ? "true" : "false" );
+                break;
+            }
+
+            case True, False:
+                writer.put( this.type == True ? "true" : "false" );
                 break;
 
             case Null:
@@ -581,13 +560,13 @@ struct JsonValue
         return writer.data;
     }
 
-    private wstring toPrettyJsonImpl( size_t indentLevel )
+    private dstring toPrettyJsonImpl( size_t indentLevel )
     {
-        auto writer = appender!wstring;
+        auto writer = appender!dstring;
 
-        wstring indent() @property
+        dstring indent() @property
         {
-            return ""w.rightJustify( indentLevel * 4 );
+            return ""d.rightJustify( indentLevel * 4 );
         }
 
         with( Type )
@@ -632,11 +611,28 @@ struct JsonValue
                 break;
 
             case Number:
-                writer.formattedWrite( "%g", this.numberValue );
-                break;
+            {
+                with( NumberType )
+                final switch( this._numType )
+                {
+                    case signed:
+                        writer.formattedWrite( "%d", this.signed );
+                        break;
+                    
+                    case unsigned:
+                        writer.formattedWrite( "%d", this.unsigned );
+                        break;
+                    
+                    case floating:
+                        writer.formattedWrite( "%g", this.floating );
+                        break;
+                }
 
-            case Boolean:
-                writer.put( this.booleanValue ? "true" : "false" );
+                break;
+            }
+
+            case True, False:
+                writer.put( this.type == True ? "true" : "false" );
                 break;
 
             case Null:

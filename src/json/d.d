@@ -1,21 +1,47 @@
 module json.d;
 
 public {
+    import json.parser : parseJson;
     import json.value;
-    import json.exception;
 }
 
-private {
-    import std.utf;
-    import std.traits;
-
-    import json.parser.parser;
-}
-
-JsonValue parseJson( T )( T json ) if( isSomeString!T )
+unittest
 {
-    auto lexer = new Lexer( json.toUTF16() );
-    auto parser = new Parser( lexer );
+    import std.algorithm;
 
-    return parser.parse();
+    auto text = q{{
+        "firstName": "John",
+        "lastName": "Doe",
+        "age": 35,
+
+        "phoneNumbers": [
+            "605-555-1234"
+        ],
+
+        "transactions": [
+            123.4,
+            -500,
+            -1e5,
+            2e+5,
+            2E-5,
+            2.5E2,
+            75
+        ]
+    }};
+
+    auto json = text.parseJson();
+    assert( json.isObject );
+    assert( json["firstName"].isString && json["lastName"].isString );
+    assert( json["age"].isUnsigned );
+    assert( json["phoneNumbers"].isArray );
+    assert( json["transactions"].all!( x => x.isNumber ) );
+
+    JsonValue default_;
+    assert( default_.isNull );
+
+    JsonValue true_ = true;
+    JsonValue false_ = false;
+
+    assert( true_ );
+    assert( !false_ );
 }
