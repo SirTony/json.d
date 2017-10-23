@@ -67,9 +67,9 @@ private:
                 }
             }
 
-            case True:       return JsonValue.True;
-            case False:      return JsonValue.False;
-            case Null:       return JsonValue.Null;
+            case True:       return jtrue;
+            case False:      return jfalse;
+            case Null:       return jnull;
             case LeftBrace:  return this.parseObject();
             case LeftSquare: return this.parseArray();
 

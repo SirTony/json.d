@@ -26,6 +26,24 @@ JsonValue toJson( T )( T value )
     return JsonValue( value );
 }
 
+auto jtrue() pure nothrow @property @system
+{
+    static immutable value = JsonValue( true );
+    return value;
+}
+
+auto jfalse() pure nothrow @property @system
+{
+    static immutable value = JsonValue( false );
+    return value;
+}
+
+auto jnull() pure nothrow @property @system
+{
+    static immutable value = JsonValue( null );
+    return value;
+}
+
 alias asJson = toJson;
 
 struct JsonValue
@@ -47,34 +65,6 @@ struct JsonValue
         signed,
         unsigned,
         floating,
-    }
-
-    private static Nullable!JsonValue _null;
-    private static Nullable!JsonValue _false;
-    private static Nullable!JsonValue _true;
-
-    static JsonValue Null() @property
-    {
-        if( _null.isNull )
-            _null = JsonValue( Type.Null );
-
-        return _null.get();
-    }
-
-    static JsonValue False() @property
-    {
-        if( _false.isNull )
-            _false = JsonValue( false );
-
-        return _false.get();
-    }
-
-    static JsonValue True() @property
-    {
-        if( _true.isNull )
-            _true = JsonValue( true );
-
-        return _true.get();
     }
 
     private {
@@ -236,11 +226,26 @@ struct JsonValue
         this._type = type;
     }
 
+    static auto newArray()
+    {
+        return JsonValue( typeof( JsonValue.arrayValue ).init );
+    }
+
+    static auto newObject()
+    {
+        return JsonValue( typeof( JsonValue.objectValue ).init );
+    }
+
     bool hasKey( T )( T key ) if( traits.isSomeString!T )
     {
         return this.type == Type.Object
              ? ( key.toUTF32() in this.objectValue ) !is null
              : false;
+    }
+
+    T get( T, S )( S key, lazy T defaultvalue = T.init ) if( traits.isSomeString!T )
+    {
+        return this.hasKey( key ) ? this.objectValue[key.toUTF32()].as!T : defaultvalue;
     }
 
     alias to = this.opCast;
@@ -535,11 +540,11 @@ struct JsonValue
                     case signed:
                         writer.formattedWrite( "%d", this.signed );
                         break;
-                    
+
                     case unsigned:
                         writer.formattedWrite( "%d", this.unsigned );
                         break;
-                    
+
                     case floating:
                         writer.formattedWrite( "%g", this.floating );
                         break;
@@ -618,11 +623,11 @@ struct JsonValue
                     case signed:
                         writer.formattedWrite( "%d", this.signed );
                         break;
-                    
+
                     case unsigned:
                         writer.formattedWrite( "%d", this.unsigned );
                         break;
-                    
+
                     case floating:
                         writer.formattedWrite( "%g", this.floating );
                         break;
