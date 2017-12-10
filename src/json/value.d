@@ -236,14 +236,14 @@ struct JsonValue
         return JsonValue( typeof( JsonValue.objectValue ).init );
     }
 
-    bool hasKey( T )( T key ) if( traits.isSomeString!T )
+    bool hasKey( T )( T key ) const pure nothrow if( traits.isSomeString!T )
     {
         return this.type == Type.Object
              ? ( key.toUTF32() in this.objectValue ) !is null
              : false;
     }
 
-    T get( T, S )( S key, lazy T defaultvalue = T.init ) if( traits.isSomeString!T )
+    T get( T, S )( S key, lazy T defaultvalue = T.init ) const pure nothrow if( traits.isSomeString!T )
     {
         return this.hasKey( key ) ? this.objectValue[key.toUTF32()].as!T : defaultvalue;
     }
@@ -302,12 +302,12 @@ struct JsonValue
         return JsonValue( this.arrayValue );
     }
 
-    size_t opDollar()
+    size_t opDollar() const pure @system
     {
         return this.length;
     }
 
-    JsonValue opSlice( size_t begin, size_t end )
+    JsonValue opSlice( size_t begin, size_t end ) const
     {
         this.enforceType!( Type.Array );
         return JsonValue( this.arrayValue[begin .. end] );
@@ -320,7 +320,7 @@ struct JsonValue
         return this;
     }
 
-    JsonValue opIndex( size_t i )
+    JsonValue opIndex( size_t i ) const pure
     {
         this.enforceType!( Type.Array );
         return this.arrayValue[i];
@@ -336,7 +336,7 @@ struct JsonValue
             return this.arrayValue[i] = JsonValue( value );
     }
 
-    JsonValue opIndex( T )( T key ) if( traits.isSomeString!T )
+    JsonValue opIndex( T )( T key ) const pure if( traits.isSomeString!T )
     {
         this.enforceType!( Type.Object );
         return this.objectValue[key.toUTF32()];
@@ -371,6 +371,8 @@ struct JsonValue
     {
         static if( isJsonValue!T )
             return this.type == value.type && this.opCmp( value ) == 0;
+        else static if( traits.isSomeString!T )
+            return this.stringValue == value.toUTF32();
         else
             return this.opCmp( value ) == 0;
     }

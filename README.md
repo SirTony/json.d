@@ -17,13 +17,58 @@ JSON.d is still young, and as such **it is prerelease software**, so please keep
 
 - [x] Parsing JSON string to object structure.
 - [x] Writing object structure back to JSON.
+- [x] Option to use non-stardard extensions.
 
 ### Planned Features
 
 - [ ] Validating JSON documents against schemas
 - [ ] Validating JSON documents against a custom, [TypeScript](http://www.typescriptlang.org/) inspired [DSL](https://en.wikipedia.org/wiki/Domain-specific_language).
   - [ ] Generating valid schemas from the DSL.
-- [ ] Deserializing JSON to objects (similar to [Json.NET](http://www.newtonsoft.com/json))
+- [x] Serializing and deserializing JSON to objects (similar to [Json.NET](http://www.newtonsoft.com/json)) _partial_
+
+### Non-standard extensions
+
+By passing a flag to `parseJson` you can enable non-standard parsing to enable a number of extensions, partially bridging the gap between the JSON standard and JavaScript. The parser is standard-compliant by default.
+
+The non-standard extensions are:
+
+- Single-quoted strings
+- Unquoted (identifier) object keys
+- Trailing commas in objects and arrays
+- Single ling comments beginning with `//`
+- Multi-line comments beginning with `/*` and ending with `*/`. Multi-line comments can be nested inside other multi-line comments.
+
+JavaScript's `undefined` is **not** supported.
+
+Example:
+
+```javascript
+//nonstandard.json
+{
+    unquoted: 'single-quoted string', // trailing comma
+
+    /* multi-line comment
+        /* with another one nested inside */
+    */
+}
+```
+
+```D
+// nonstandard.d
+
+import std.file;
+import std.stdio;
+
+import json.d;
+
+void main()
+{
+    auto json = readText( "nonstandard.json" );
+    auto store = json.parseJson( StandardCompliant.no );
+
+    writeln( json["unquoted"] );
+}
+```
 
 Getting started
 ===============
@@ -87,18 +132,13 @@ void main()
 }
 ```
 
-Things to note
-==============
-
-JSON.d is tested on Windows with the DMD compiler, version 2.068. Other D compilers such as LDC, SDC, and GDC are not officially supported, but should still work.
-
 License
 =======
 
 ```
 The MIT License (MIT)
 
-Copyright © 2015 Tony Hudgins
+Copyright © 2015-2017 Tony J. Hudgins
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

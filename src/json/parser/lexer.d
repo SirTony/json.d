@@ -81,6 +81,8 @@ final package class JsonToken
 {
     enum Type
     {
+        Identifier,
+
         String,
         Number,
 
@@ -160,6 +162,8 @@ final package class JsonToken
     }
 }
 
+alias StandardCompliant = Flag!"JsonStandardCompliantParsing";
+
 final package class Lexer
 {
 private:
@@ -170,16 +174,18 @@ private:
     size_t column;
     TextSpan[] spans;
     Tokenizer[] tokenizers;
+    immutable StandardCompliant standard;
 
     bool eof() const pure nothrow @safe @property
     {
         return this.index >= this.length;
     }
 
-    public this( S )( S source ) if( isSomeString!S )
+    public this( S )( S source, StandardCompliant standardCompliant ) if( isSomeString!S )
     {
         this.source = source.toUTF32();
         this.length = this.source.length;
+        this.standard = standardCompliant;
         this.tokenizers = [
             &this.tryLexString,
             &this.tryLexNumber,
@@ -194,6 +200,9 @@ private:
         while( !this.eof )
         {
             this.skipWhile( c => c.isWhite );
+
+            if( !this.standard && ( this.trySkipSingleLineComment() || this.trySkipMultiLineComment() ) )
+                continue;
 
             if( this.eof )
                 break;
@@ -214,20 +223,85 @@ private:
         return tokens;
     }
 
+    bool trySkipSingleLineComment()
+    {
+        if( !this.isNext( "//" ) )
+            return false;
+
+        this.skipWhile( c => c != '\n' );
+        return true;
+    }
+
+    bool trySkipMultiLineComment()
+    {
+        if( !this.isNext( "/*" ) )
+            return false;
+
+        this.markStart();
+        int level = 1;
+
+        this.takeIfNext( "/*" );
+        while( !this.eof && level > 0 )
+        {
+            if( this.isNext( "*/" ) )
+            {
+                level -= 1;
+                this.takeIfNext( "*/" );
+                this.markEnd();
+                continue;
+            }
+
+            if( this.isNext( "/*" ) )
+            {
+                level += 1;
+                this.markStart();
+                this.takeIfNext( "/*" );
+                continue;
+            }
+
+            if( this.eof )
+                break;
+
+            this.take();
+        }
+
+        // if this is true then we've reached EOF and there's an unterminated comment somewhere
+        if( level > 0 )
+            throw new JsonParserException(
+                this.markEnd(),
+                "unexpected end-of-input (unclosed multi-line comment)"
+            );
+
+        return true;
+    }
+
     bool tryLexString( dchar c, out JsonToken token )
     {
-        if( c != '"' )
+        if( c != '"' && c != '\'' )
+            return false;
+
+        if( c == '\'' && this.standard )
             return false;
 
         this.markStart();
         immutable terminator = this.take();
 
+
+        if( c == '\'' && this.standard )
+            throw new JsonParserException(
+                this.markEnd(),
+                "cannot use single-quoted strings in standard-compliant mode"
+            );
+
         dstring text;
         dchar   next;
         while( !this.eof && ( next = this.peek() ) != terminator )
         {
-            if( next.isControl && !next.isSpace )
-                throw new JsonParserException( this.markEnd(), "Control characters are not allowed in strings" );
+            if( this.standard && next.isControl && !next.isSpace )
+                throw new JsonParserException(
+                    this.markEnd(),
+                    "Control characters (0x%04X) are not allowed in strings".format( next )
+                );
 
             if( next == '\\' )
             {
@@ -313,6 +387,12 @@ private:
         if( auto type = text in Keywords )
         {
             token = this.makeToken( *type, text );
+            return true;
+        }
+
+        if( !this.standard )
+        {
+            token = this.makeToken( JsonToken.Type.Identifier, text );
             return true;
         }
 

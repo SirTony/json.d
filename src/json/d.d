@@ -2,14 +2,16 @@ module json.d;
 
 public {
     import json.parser : parseJson;
+    import json.parser.lexer : StandardCompliant;
     import json.value;
 }
 
-unittest
+// test standard-compliant JSON parsing
+@system unittest
 {
     import std.algorithm;
 
-    auto text = q{{
+    immutable text = `{
         "firstName": "John",
         "lastName": "Doe",
         "age": 35,
@@ -27,9 +29,9 @@ unittest
             2.5E2,
             75
         ]
-    }};
+    }`;
 
-    auto json = text.parseJson();
+    immutable json = text.parseJson();
     assert( json.isObject );
     assert( json["firstName"].isString && json["lastName"].isString );
     assert( json["age"].isUnsigned );
@@ -44,4 +46,20 @@ unittest
 
     assert( true_ );
     assert( !false_ );
+}
+
+// test non-standard parsing
+@system unittest
+{
+    immutable text = `{
+        unquoted: 'single-quoted string', // trailling comma
+
+        /* multi-line comment
+            /* with another one nested inside */
+        */}`;
+
+    immutable json = text.parseJson( StandardCompliant.no );
+
+    assert( json.isObject );
+    assert( json["unquoted"].isString && json["unquoted"] == "single-quoted string" );
 }

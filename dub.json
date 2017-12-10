@@ -4,7 +4,7 @@
     "authors":     [ "Tony J. Hudgins" ],
     "homepage":    "https://github.com/SirTony/json.d",
     "license":     "MIT",
-    "copyright":   "Copyright © 2017 Tony J. Hudgins",
+    "copyright":   "Copyright © 2015-2017 Tony J. Hudgins",
 
     "targetType":  "library",
     "targetName":  "json",

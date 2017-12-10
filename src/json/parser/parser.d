@@ -32,11 +32,13 @@ private:
     JsonToken[] tokens;
     immutable size_t length;
     size_t index;
+    StandardCompliant standard;
 
-    public this( Lexer lexer )
+    public this( Lexer lexer, StandardCompliant standardCompliant )
     {
         this.tokens = lexer.tokenize();
         this.length = this.tokens.length;
+        this.standard = standardCompliant;
     }
 
     public JsonValue parse()
@@ -85,12 +87,18 @@ private:
             JsonValue[dstring] object;
             while( !this.match( RightBrace ) )
             {
-                auto key = this.take( String );
+                auto key = this.standard ? this.take( String ) : this.takeFirstOf( String, Identifier );
                 this.take( Colon );
 
                 object[key.text] = this.parseValue();
 
-                if( !this.matchAndTake( Comma ) )
+                if( !this.match( Comma ) )
+                    break;
+
+                this.take( Comma );
+
+                // allow trailing comma in non-standard mode
+                if( !this.standard && this.match( RightBrace ) )
                     break;
             }
 
@@ -108,7 +116,13 @@ private:
             {
                 array ~= this.parseValue();
 
-                if( !this.matchAndTake( Comma ) )
+                if( !this.match( Comma ) )
+                    break;
+
+                this.take( Comma );
+
+                // allow trailing comma in non-standard mode
+                if( !this.standard && this.match( RightSquare ) )
                     break;
             }
 
@@ -132,6 +146,26 @@ private:
                 "Unexpected '%s', expecting '%s'".format(
                     token.identify(),
                     this.identify( type )
+                )
+            );
+
+        return token;
+    }
+
+    JsonToken takeFirstOf( JsonToken.Type[] types... )
+    {
+        import std.array : join;
+        import std.algorithm.iteration : map;
+        import std.algorithm.searching : canFind;
+
+        auto token = this.take();
+
+        if( !types.canFind( token.type ) )
+            throw new JsonParserException(
+                token,
+                "Unexpected '%s', expecting one of: %s".format(
+                    token.identify(),
+                    types.map!( t => this.identify( t ) ).join( ", " )
                 )
             );
 
