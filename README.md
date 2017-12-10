@@ -63,8 +63,8 @@ import json.d;
 
 void main()
 {
-    auto json = readText( "nonstandard.json" );
-    auto store = json.parseJson( StandardCompliant.no );
+    auto text = readText( "nonstandard.json" );
+    auto json = text.parseJson( StandardCompliant.no );
 
     writeln( json["unquoted"] );
 }
