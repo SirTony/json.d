@@ -1,5 +1,8 @@
 module json.serialization;
 
+// this module is not ready for use just yet
+version( none ):
+
 private{
     import json.parser : parseJson;
     import json.value;
@@ -8,6 +11,113 @@ private{
     import std.string;
     import std.traits;
     import std.typecons;
+
+    void ensureNotNull( T )( JsonValue value )
+    {
+        if( value.isNull )
+            throw new JsonException( "cannot convert null to %s".format( T.stringof ) );
+    }
+
+    void ensureDeserializable( T, string name )()
+    {
+        enum canConvert = is( typeof( {
+            auto _ = &JsonValue.opCast!T;
+        } ) );
+
+        static assert(
+            canConvert,
+            "cannot convert to type %s for field %s".format( T.stringof, name )
+        );
+    }
+
+    template isNullable( T, bool typeconsNullable )
+    {
+        static if( !typeconsNullable )
+            enum isNullable = is( typeof( { T _ = null; } ) );
+        else
+        {
+            enum isNullable = is( typeof( {
+                import std.algorithm.searching : startsWith;
+
+                enum name = fullyQualifiedName!( Unqual!T );
+                static assert( name.startsWith( "std.typecons.Nullable" ) );
+            } ) );
+        }
+    }
+
+    enum typeIsJsonObject( T, bool hasDeserializer = true, bool hasSerializer = true ) = is( typeof( {
+        static if( hasDeserializer )
+            T.fromJson( JsonValue.init );
+
+        static if( hasSerializer )
+            JsonValue _ = T.init.toJson();
+    } ) );
+
+    enum typeIsJsonValue( T ) = is( typeof( {
+        auto _ = JsonValue( T.init );
+    } ) );
+
+    enum isRefNullable( T ) = is( typeof( {
+        import std.algorithm.searching : startsWith;
+
+        enum name = fullyQualifiedName!( Unqual!T );
+        static assert( name.startsWith( "std.typecons.NullableRef" ) );
+    } ) );
+
+    void deserialize( string name, T )( JsonValue value, T* member )
+        if( isNullable!( T, false ) && !typeIsJsonObject!( T, true, false ) )
+    {
+        ensureDeserializable!( T, name );
+        *member = value.isNull ? null : value.to!T;
+    }
+
+    void deserialize( string name, T )( JsonValue value, T* member )
+        if( typeIsJsonObject!( T, true, false ) )
+    {
+        *member = value.isNull ? null : T.fromJson( value );
+    }
+
+    void deserialize( string name, T )( JsonValue value, T* member )
+        if( isNullable!( T, true ) && !isRefNullable!T )
+    {
+        alias TDest = Unqual!( ReturnType!( &(*member).get ) );
+        ensureDeserializable!( TDest, name );
+
+        *member = value.isNull ? T.init : T( value.to!TDest );
+    }
+
+    void deserialize( string name, T )( JsonValue value, T* member )
+        if( isNullable!( T, true ) && isRefNullable!T )
+    {
+        alias TDest = Unqual!( ReturnType!( &(*member).get ) );
+        ensureDeserializable!( TDest, name );
+
+        TDest* ptr = void;
+
+        if( value.isNull )
+        {
+            *member = T.init;
+            return;
+        }
+
+        *ptr = value.to!TDest;
+        *member = T( ptr );
+    }
+
+    void deserialize( string name, T )( JsonValue value, T* member )
+        if( ( !isNullable!( T, true ) && !isNullable!( T, false ) ) && typeIsJsonObject!( T, true, false ) )
+    {
+        value.ensureNotNull!T;
+        *member = T.fromJson( value );
+    }
+
+    void deserialize( string name, T )( JsonValue value, T* member )
+        if( ( !isNullable!( T, true ) && !isNullable!( T, false ) ) && !typeIsJsonObject!( T, true, false ) )
+    {
+        ensureDeserializable!( T, name );
+        value.ensureNotNull!T;
+        *member = value.to!T;
+    }
 }
 
 enum Required
@@ -109,29 +219,11 @@ private template Reflector( This ) if( is( This == class ) || is( This == struct
             return Required.no;
     }
 
-    enum members = Filter!( not!isImmutable, Filter!( shouldInclude, FieldNameTuple!This ) );
+    static if( ( FieldNameTuple!This ).length )
+        enum members = Filter!( not!isImmutable, Filter!( shouldInclude, FieldNameTuple!This ) );
+    else
+        enum members = AliasSeq!();
 }
-
-private enum isNullable( T ) =
-    is( typeof( { T _ = null; } ) ) ||
-    is( typeof( {
-        import std.algorithm.searching : startsWith;
-
-        enum name = fullyQualifiedName!( Unqual!T );
-        static assert( name.startsWith( "std.typecons.Nullable" ) );
-    } ) );
-
-private enum typeIsJsonObject( T ) = is( typeof( {
-        T.fromJson( JsonValue.init );
-        //JsonValue _ = T.init.toJson();
-    } ) );
-
-private enum isRef( T ) = is( typeof( {
-        import std.algorithm.searching : startsWith;
-
-        enum name = fullyQualifiedName!( Unqual!T );
-        static assert( name.startsWith( "std.typecons.NullableRef" ) );
-    } ) );
 
 mixin template JsonObject()
 {
@@ -140,9 +232,7 @@ mixin template JsonObject()
         "JsonObject template can only be mixed in to a class or struct"
     );
 
-version( none )
-{
-    T toJsonString( T = string )( bool indented = false ) if( traits.isSomeString!T )
+    T toJsonString( T = string )( bool indented = false ) if( isSomeString!T )
     {
         return this.toJson().toJsonString( indented );
     }
@@ -152,17 +242,77 @@ version( none )
         alias This = typeof( this );
         alias reflector = Reflector!This;
 
+        void ensureConversion( T, string name )()
+        {
+            enum canConvert = is( typeof( {
+                auto _ = JsonValue( T.init );
+            } ) );
+
+            static assert(
+                canConvert,
+                "cannot convert from type %s for field %s".format( T.stringof, name )
+            );
+        }
+
         auto json = JsonValue.newObject();
 
         foreach( i, name; reflector.members )
         {
             enum field = reflector.fieldName!name;
             alias type = typeof( __traits( getMember, this, name ) );
+
+            try
+            {
+                static if( isNullable!type )
+                {
+                    static if( is( typeof( { type _ = null; } ) ) && !typeIsJsonObject!type )
+                    {
+                        ensureConversion!( type, name );
+                        mixin( "json[\"%s\"] = this.%s.isNull ? jnull : JsonValue( this );".format( field, name ) );
+                    }
+                    else static if( typeIsJsonObject!( type, true ) )
+                        mixin( "json[\"%s\"] = this.%2$s.isNull ? jnull : this.%2$s.toJson();".format( field, name ) );
+                    else // field is Nullable!T or NullableRef!T
+                    {
+                        alias dest = Unqual!( typeof( __traits( getMember, mixin( "instance." ~ name ), "get" ) ) );
+                        ensureConversion!( dest, name );
+
+                        static if( !isRef!type )
+                            mixin( "instance.%s = value.isNull ? type.init : type( value.to!dest );".format( name ) );
+                        else
+                        {
+                            dest* ptr = value.isNull ? null : new dest( value.to!dest );
+                            mixin( "instance.%s = value.isNull ? type.init : type( ptr );".format( name ) );
+                        }
+                    }
+                }
+                else // field is not nullable
+                {
+                    if( value.isNull )
+                        throw new JsonException( "cannot convert null to %s".format( type.stringof ) );
+
+                    static if( typeIsJsonObject!( type, true ) )
+                        mixin( "instanse.%s = type.fromJson( value );".format( name ) );
+                    else
+                    {
+                        ensureConversion!( type, name );
+                        mixin( "instance.%s = value.to!type;".format( name ) );
+                    }
+                }
+            }
+            catch( JsonException ex )
+            {
+                throw new JsonException(
+                    "error deserializing field '%s': %s".format( field, ex.msg ),
+                    __FILE__,
+                    __LINE__,
+                    ex
+                );
+            }
         }
 
         return json;
     }
-}
 
     static typeof( this ) fromJson( S )( S str ) if( isSomeString!S )
     {
@@ -206,35 +356,8 @@ version( none )
 
             try
             {
-                static if( isNullable!type )
-                {
-                    static if( is( typeof( { type _ = null; } ) ) && !typeIsJsonObject!type )
-                        mixin( "instance.%s = value.isNull ? null : value.to!type;".format( name ) );
-                    else static if( typeIsJsonObject!type )
-                        mixin( "instance.%s = value.isNull ? null : type.fromJson( value );".format( name ) );
-                    else // field is Nullable!T or NullableRef!T
-                    {
-                        alias dest = Unqual!( typeof( __traits( getMember, mixin( "instance." ~ name ), "get" ) ) );
-
-                        static if( !isRef!type )
-                            mixin( "instance.%s = value.isNull ? type.init : type( value.to!dest );".format( name ) );
-                        else
-                        {
-                            dest* ptr = value.isNull ? null : new dest( value.to!dest );
-                            mixin( "instance.%s = value.isNull ? type.init : type( ptr );".format( name ) );
-                        }
-                    }
-                }
-                else // field is not nullable
-                {
-                    if( value.isNull )
-                        throw new JsonException( "cannot convert null to %s".format( type.stringof ) );
-
-                    static if( typeIsJsonObject!type )
-                        mixin( "instanse.%s = type.fromJson( value );".format( name ) );
-                    else
-                        mixin( "instance.%s = value.to!type;".format( name ) );
-                }
+                type* member = &__traits( getMember, instance, name );
+                value.deserialize!( field )( member );
             }
             catch( JsonException ex )
             {
@@ -253,21 +376,23 @@ version( none )
 
 version( unittest )
 {
-    @JsonSerialization( SerializationMode.optOut )
+    private class Invalid { }
+
+    @JsonSerialization( SerializationMode.optIn )
     private struct Person
     {
         private {
-            @JsonProperty( "first_name" )
+            @JsonProperty( "first_name", Required.always )
             string _first;
 
-            @JsonProperty( "last_name", Required.allowNull )
+            @JsonProperty( "last_name", Required.always )
             string _last;
 
-            @JsonProperty( "age", Required.allowNull )
-            Nullable!ubyte _age;
+            @JsonProperty( "age", Required.always )
+            ubyte _age;
 
-            //@JsonIgnore
-            int _optedOut = 5;
+            @JsonIgnore
+            Invalid _invalid;
         }
 
         string firstName() @property { return _first; }
@@ -287,7 +412,8 @@ unittest
     }};
 
     auto john = Person.fromJson( text );
-    import std.stdio;
 
-    writeln( john );
+    assert( john.firstName == "John" );
+    assert( john.lastName == "Doe" );
+    assert( john.age == 35 );
 }
